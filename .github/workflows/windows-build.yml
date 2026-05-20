@@ -1,0 +1,61 @@
+name: windows-build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go-service/go.mod
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install PDF tools
+        run: choco install qpdf ghostscript -y --no-progress
+
+      - name: Resolve tool paths
+        run: |
+          $qpdf = (Get-Command qpdf.exe -ErrorAction SilentlyContinue).Source
+          if (-not $qpdf) {
+            $candidate = "C:\Program Files\qpdf\bin\qpdf.exe"
+            if (Test-Path $candidate) { $qpdf = $candidate }
+          }
+          if (-not $qpdf) { throw "qpdf.exe not found" }
+          $gs = (Get-ChildItem "C:\Program Files\gs" -Recurse -Filter gswin64c.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $gs) { throw "gswin64c.exe not found" }
+          "PDFTOOL_QPDF_PATH=$qpdf" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PDFTOOL_GS_PATH=$gs" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install deps
+        run: |
+          cd apps/desktop
+          npm install
+
+      - name: Build Windows installer
+        run: |
+          cd apps/desktop
+          npm run tauri:build
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdftool-windows-bundle
+          path: apps/desktop/src-tauri/target/release/bundle/**
