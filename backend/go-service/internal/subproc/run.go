@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"runtime"
-	"syscall"
 	"time"
 )
 
@@ -15,9 +13,7 @@ func Run(ctx context.Context, timeout time.Duration, bin string, args ...string)
 	defer cancel()
 
 	cmd := exec.Command(bin, args...)
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	setCmdSysProcAttr(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
@@ -39,19 +35,4 @@ func Run(ctx context.Context, timeout time.Duration, bin string, args ...string)
 		}
 		return nil
 	}
-}
-
-func terminateProcessTree(cmd *exec.Cmd) error {
-	if cmd.Process == nil {
-		return nil
-	}
-	if runtime.GOOS == "windows" {
-		killCmd := exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", cmd.Process.Pid))
-		_ = killCmd.Run()
-		return nil
-	}
-	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
-		_ = cmd.Process.Kill()
-	}
-	return nil
 }
