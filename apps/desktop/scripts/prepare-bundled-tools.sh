@@ -9,6 +9,10 @@ mkdir -p "$BIN_DIR"
 copy_tool() {
   local src="$1"
   local dst="$2"
+  if [[ -e "$dst" ]]; then
+    chmod u+w "$dst" || true
+    rm -f "$dst"
+  fi
   cp "$src" "$dst"
   chmod +x "$dst" || true
 }
