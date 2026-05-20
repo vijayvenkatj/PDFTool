@@ -26,7 +26,8 @@
     "active": true,
     "targets": "all",
     "resources": [
-      "../../../backend/go-service/bin/*"
+      "../../../backend/go-service/bin/*",
+      "resources/bin/*"
     ]
   }
 }

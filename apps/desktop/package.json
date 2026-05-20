@@ -7,7 +7,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "tools:bundle": "bash ./scripts/prepare-bundled-tools.sh",
+    "backend:build": "cd ../../backend/go-service && make build",
+    "backend:build:release": "cd ../../backend/go-service && make build",
+    "pretauri:dev": "npm run backend:build && npm run tools:bundle",
     "tauri:dev": "tauri dev",
+    "pretauri:build": "npm run backend:build:release && npm run tools:bundle",
     "tauri:build": "tauri build"
   },
   "dependencies": {

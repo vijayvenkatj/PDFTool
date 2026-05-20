@@ -40,13 +40,13 @@ export function App() {
   const [health, setHealth] = useState<BackendHealth | null>(null);
   const [isInspecting, setIsInspecting] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
+  const [runtimeState, setRuntimeState] = useState<"checking" | "ok" | "degraded">("checking");
   const canStart = files.length > 0 && outputPath.length > 0 && !activeJobId && health?.status === "ok" && !isInspecting;
 
   const addFiles = async (incoming: InputFile[]) => {
-    const existing = new Set(files.map((f) => f.path));
     const candidatePaths = incoming
       .map((f) => f.path)
-      .filter((p) => p.toLowerCase().endsWith(".pdf") && !existing.has(p));
+      .filter((p) => p.toLowerCase().endsWith(".pdf"));
     if (candidatePaths.length === 0) return;
 
     setIsInspecting(true);
@@ -63,7 +63,11 @@ export function App() {
       if (bad.length > 0) {
         setLogs((x) => [`skipped ${bad.length} invalid file(s)`, ...x].slice(0, 200));
       }
-      setFiles((current) => [...current, ...good].slice(0, maxFiles));
+      setFiles((current) => {
+        const seen = new Set(current.map((f) => f.path));
+        const unique = good.filter((f) => !seen.has(f.path));
+        return [...current, ...unique].slice(0, maxFiles);
+      });
     } catch (err) {
       setLogs((x) => [`file inspect failed: ${String(err)}`, ...x].slice(0, 200));
     } finally {
@@ -75,14 +79,25 @@ export function App() {
     startBackend()
       .then(async () => {
         setStartupError(null);
-        try {
-          const h = await getHealth();
-          setHealth(h);
-          if (h.status !== "ok") {
-            setLogs((x) => ["runtime health degraded: qpdf/ghostscript not ready", ...x].slice(0, 200));
+        setRuntimeState("checking");
+        let got = false;
+        for (let i = 0; i < 8; i++) {
+          try {
+            const h = await getHealth();
+            setHealth(h);
+            setRuntimeState(h.status === "ok" ? "ok" : "degraded");
+            if (h.status !== "ok") {
+              setLogs((x) => ["runtime health degraded: qpdf/ghostscript not ready", ...x].slice(0, 200));
+            }
+            got = true;
+            break;
+          } catch {
+            await new Promise((r) => setTimeout(r, 250));
           }
-        } catch (err) {
-          setLogs((x) => [`health check error: ${String(err)}`, ...x].slice(0, 200));
+        }
+        if (!got) {
+          setRuntimeState("degraded");
+          setLogs((x) => ["health check error: backend not ready", ...x].slice(0, 200));
         }
       })
       .catch((err) => {
@@ -101,6 +116,21 @@ export function App() {
       unsub();
     };
   }, []);
+
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      try {
+        const h = await getHealth();
+        setHealth(h);
+        setRuntimeState(h.status === "ok" ? "ok" : "degraded");
+      } catch {
+        if (health) {
+          setRuntimeState("degraded");
+        }
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [health]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -235,8 +265,10 @@ export function App() {
             Cancel
           </button>
         </div>
-        <p>Runtime: {health?.status ?? "checking"}</p>
-        <p>qpdf: {health?.qpdf.ok ? "ok" : "missing"} | ghostscript: {health?.ghostscript.ok ? "ok" : "missing"}</p>
+        <p>Runtime: {runtimeState}</p>
+        <p>
+          qpdf: {health ? (health.qpdf.ok ? "ok" : "missing") : "-"} | ghostscript: {health ? (health.ghostscript.ok ? "ok" : "missing") : "-"}
+        </p>
         {startupError ? <p>{startupError}</p> : null}
         {isInspecting ? <p>Inspecting selected files...</p> : null}
         <p>Status: {lastEvent?.status ?? "idle"}</p>
