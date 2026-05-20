@@ -19,12 +19,12 @@ Production-oriented desktop PDF compressor + merger.
 
 1. Install tools:
    - `brew install qpdf ghostscript`
-2. Build backend:
-   - `cd backend/go-service && make build`
-3. Run desktop app:
+2. Run desktop app:
    - `cd apps/desktop`
    - `npm install`
    - `npm run tauri:dev`
+
+`npm run tauri:dev` now auto-builds the Go backend sidecar and bundles qpdf/ghostscript tools before launch.
 
 ## Notes
 
@@ -36,3 +36,13 @@ Production-oriented desktop PDF compressor + merger.
 - Production-like tool path overrides:
   - `PDFTOOL_QPDF_PATH`
   - `PDFTOOL_GS_PATH`
+
+## Build App Bundle
+
+From `apps/desktop`:
+
+- `npm run tauri:build`
+
+This auto-builds the Go sidecar and bundles qpdf/ghostscript before packaging.
+
+The produced app bundle is self-contained for the build platform.
