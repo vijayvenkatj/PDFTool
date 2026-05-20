@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -315,108 +314,4 @@ func (m *Manager) processOne(ctx context.Context, root string, preset model.Comp
 		return result{in: in, skipped: true, reason: "compressed output invalid: " + err.Error()}
 	}
 	return result{in: in, outPath: compressed}
-}
-
-func sanitize(name string, fullPath string) string {
-	name = strings.ReplaceAll(name, " ", "_")
-	name = strings.TrimSuffix(name, filepath.Ext(name))
-	if name == "" {
-		return fmt.Sprintf("file-%d", time.Now().UnixNano())
-	}
-	return fmt.Sprintf("%s-%s", name, shortHash(fullPath))
-}
-
-func shortHash(value string) string {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(value))
-	return fmt.Sprintf("%08x", h.Sum32())
-}
-
-func copyFile(src, dst string) error {
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(120 * time.Millisecond)
-		}
-		in, err := os.Open(src)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		out, err := os.Create(dst)
-		if err != nil {
-			_ = in.Close()
-			lastErr = err
-			continue
-		}
-
-		_, readErr := out.ReadFrom(in)
-		closeInErr := in.Close()
-		syncErr := out.Sync()
-		closeOutErr := out.Close()
-		if readErr == nil && closeInErr == nil && syncErr == nil && closeOutErr == nil {
-			return nil
-		}
-		if readErr != nil {
-			lastErr = readErr
-		} else if closeInErr != nil {
-			lastErr = closeInErr
-		} else if syncErr != nil {
-			lastErr = syncErr
-		} else {
-			lastErr = closeOutErr
-		}
-	}
-	return lastErr
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func perFileCompressTimeout(preset model.CompressionPreset) time.Duration {
-	switch preset {
-	case model.PresetAggressive:
-		return 90 * time.Second
-	case model.PresetLow:
-		return 2 * time.Minute
-	case model.PresetMedium:
-		return 3 * time.Minute
-	case model.PresetHigh:
-		return 4 * time.Minute
-	default:
-		return 3 * time.Minute
-	}
-}
-
-func ensureUsableOutput(ctx context.Context, tools pipeline.ToolPaths, repairedPath, outputPath string) error {
-	info, err := os.Stat(outputPath)
-	if err != nil {
-		return err
-	}
-	if info.Size() <= 0 {
-		return fmt.Errorf("empty output")
-	}
-	checkCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
-	if err := pipeline.CheckPDF(checkCtx, tools, outputPath); err != nil {
-		return err
-	}
-	// If output is substantially larger than repaired input, treat as non-beneficial.
-	inInfo, err := os.Stat(repairedPath)
-	if err == nil && inInfo.Size() > 0 && info.Size() > inInfo.Size()*12/10 {
-		return fmt.Errorf("output grew too much")
-	}
-	return nil
 }
