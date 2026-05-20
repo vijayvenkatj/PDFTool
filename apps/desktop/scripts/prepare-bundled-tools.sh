@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BIN_DIR="$ROOT_DIR/src-tauri/resources/bin"
+BIN_DIR="$ROOT_DIR/../../backend/go-service/bin"
 
 mkdir -p "$BIN_DIR"
 
@@ -13,7 +13,17 @@ copy_tool() {
     chmod u+w "$dst" || true
     rm -f "$dst"
   fi
-  cp "$src" "$dst"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    cp -X "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
+  else
+    cp "$src" "$dst"
+  fi
+  chmod u+rw "$dst" || true
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -c "$dst" 2>/dev/null || true
+    xattr -d com.apple.provenance "$dst" 2>/dev/null || true
+  fi
+  chmod a+r "$dst" || true
   chmod +x "$dst" || true
 }
 

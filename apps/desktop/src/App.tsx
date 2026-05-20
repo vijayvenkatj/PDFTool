@@ -27,6 +27,19 @@ function toInputFile(path: string): InputFile {
   };
 }
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx++;
+  }
+  const precision = idx === 0 ? 0 : 2;
+  return `${value.toFixed(precision)} ${units[idx]}`;
+}
+
 export function App() {
   const [files, setFiles] = useState<InputFile[]>([]);
   const [preset, setPreset] = useState<CompressionPreset>("medium");
@@ -179,105 +192,145 @@ export function App() {
   const totalBytes = useMemo(() => files.reduce((sum, f) => sum + f.sizeBytes, 0), [files]);
 
   return (
-    <main className="app">
-      <section className="panel">
-        <h1>PDF Tool</h1>
-        <div
-          className="dropzone"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={onDrop}
-        >
-          Drag and drop PDF files here
+    <div className="app">
+      <header className="appHeader">
+        <div>
+          <h1>PDF Tool</h1>
+          <p className="subtitle">Compress and merge PDFs offline.</p>
         </div>
-        <button onClick={selectFiles}>Choose PDF files</button>
-        <div className="row">
-          <label>Max files</label>
-          <input type="number" min={1} max={500} value={maxFiles} onChange={(e) => setMaxFiles(Number(e.target.value || DEFAULT_MAX_FILES))} />
-          <label>Workers</label>
-          <input type="number" min={1} max={8} value={maxWorkers} onChange={(e) => setMaxWorkers(Number(e.target.value || 4))} />
+        <div className="headerStatus">
+          <div className="statusRow">
+            <span className="label">Runtime</span>
+            <span className={`status ${runtimeState}`}>{runtimeState}</span>
+          </div>
+          <div className="toolRow">
+            qpdf: {health ? (health.qpdf.ok ? "ok" : "missing") : "-"} | ghostscript: {health ? (health.ghostscript.ok ? "ok" : "missing") : "-"}
+          </div>
         </div>
-        <div className="row">
-          <label>Preset</label>
-          <select value={preset} onChange={(e) => setPreset(e.target.value as CompressionPreset)}>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="aggressive">Aggressive</option>
-          </select>
-        </div>
-        <div className="row">
-          <label>Output file path</label>
-          <input value={outputPath} onChange={(e) => setOutputPath(e.target.value)} placeholder="/path/to/output.pdf" />
-          <button onClick={selectOutput}>Browse</button>
-        </div>
-      </section>
+      </header>
 
-      <section className="panel">
-        <h2>Files ({files.length})</h2>
-        <p>Total size: {(totalBytes / (1024 * 1024)).toFixed(2)} MB</p>
-        <ol className="fileList">
-          {files.map((f, i) => (
-            <li
-              key={`${f.path}-${i}`}
-              draggable
-              onDragStart={() => setDraggingIndex(i)}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={() => {
-                if (draggingIndex === null || draggingIndex === i) return;
-                setFiles((arr) => {
-                  const next = [...arr];
-                  const [item] = next.splice(draggingIndex, 1);
-                  next.splice(i, 0, item);
-                  return next;
-                });
-                setDraggingIndex(null);
+      <main className="grid">
+        <section className="panel">
+          <div className="panelHeader">
+            <h2>Input</h2>
+            <button className="btnGhost" onClick={selectFiles}>Choose PDF files</button>
+          </div>
+          <div
+            className="dropzone"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={onDrop}
+          >
+            <strong>Drop PDFs here</strong>
+            <span>or use the button above</span>
+          </div>
+          <div className="row">
+            <label>Max files</label>
+            <input type="number" min={1} max={500} value={maxFiles} onChange={(e) => setMaxFiles(Number(e.target.value || DEFAULT_MAX_FILES))} />
+            <label>Workers</label>
+            <input type="number" min={1} max={8} value={maxWorkers} onChange={(e) => setMaxWorkers(Number(e.target.value || 4))} />
+          </div>
+          <div className="row">
+            <label>Preset</label>
+            <select value={preset} onChange={(e) => setPreset(e.target.value as CompressionPreset)}>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="aggressive">Aggressive</option>
+            </select>
+          </div>
+          <div className="row">
+            <label>Output file path</label>
+            <input value={outputPath} onChange={(e) => setOutputPath(e.target.value)} placeholder="/path/to/output.pdf" />
+            <button className="btnGhost" onClick={selectOutput}>Browse</button>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panelHeader">
+            <div>
+              <h2>Files</h2>
+              <p className="muted">{files.length} files · {formatBytes(totalBytes)}</p>
+            </div>
+            <button className="btnGhost" onClick={() => setFiles([])} disabled={files.length === 0 || !!activeJobId}>Clear</button>
+          </div>
+          <p className="muted">Drag to reorder</p>
+          {files.length === 0 ? (
+            <div className="emptyState">No files added yet.</div>
+          ) : (
+            <ol className="fileList">
+              {files.map((f, i) => (
+                <li
+                  key={`${f.path}-${i}`}
+                  draggable
+                  onDragStart={() => setDraggingIndex(i)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDragEnd={() => setDraggingIndex(null)}
+                  onDrop={() => {
+                    if (draggingIndex === null || draggingIndex === i) return;
+                    setFiles((arr) => {
+                      const next = [...arr];
+                      const [item] = next.splice(draggingIndex, 1);
+                      next.splice(i, 0, item);
+                      return next;
+                    });
+                    setDraggingIndex(null);
+                  }}
+                >
+                  <div className="fileMeta">
+                    <span className="fileIndex">{i + 1}.</span>
+                    <span className="fileName">{f.name}</span>
+                    <span className="fileSize">{formatBytes(f.sizeBytes)}</span>
+                  </div>
+                  <button className="btnGhost" onClick={() => setFiles((arr) => arr.filter((_, idx) => idx !== i))}>Remove</button>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="panelHeader">
+            <h2>Run</h2>
+          </div>
+          <div className="row">
+            <button
+              className="btnPrimary"
+              disabled={!canStart}
+              onClick={async () => {
+                const res = await createJob({ files, preset, outputPath, maxWorkers });
+                setActiveJobId(res.jobId);
               }}
             >
-              <span>{f.name}</span>
-              <div className="row">
-                <button onClick={() => setFiles((arr) => arr.filter((_, idx) => idx !== i))}>Remove</button>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      <section className="panel">
-        <h2>Run</h2>
-        <div className="row">
-          <button
-            disabled={!canStart}
-            onClick={async () => {
-              const res = await createJob({ files, preset, outputPath, maxWorkers });
-              setActiveJobId(res.jobId);
-            }}
-          >
-            Start
-          </button>
-          <button
-            disabled={!activeJobId}
-            onClick={async () => {
-              if (activeJobId) {
-                await cancelJob(activeJobId);
-              }
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-        <p>Runtime: {runtimeState}</p>
-        <p>
-          qpdf: {health ? (health.qpdf.ok ? "ok" : "missing") : "-"} | ghostscript: {health ? (health.ghostscript.ok ? "ok" : "missing") : "-"}
-        </p>
-        {startupError ? <p>{startupError}</p> : null}
-        {isInspecting ? <p>Inspecting selected files...</p> : null}
-        <p>Status: {lastEvent?.status ?? "idle"}</p>
-        <p>Stage: {lastEvent?.stage ?? "-"}</p>
-        <progress value={lastEvent?.progress ?? 0} max={1} />
-        <div className="logBox">
-          {logs.map((line, idx) => <div key={idx}>{line}</div>)}
-        </div>
-      </section>
-    </main>
+              Start
+            </button>
+            <button
+              className="btnGhost"
+              disabled={!activeJobId}
+              onClick={async () => {
+                if (activeJobId) {
+                  await cancelJob(activeJobId);
+                }
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          {startupError ? <p className="warning">{startupError}</p> : null}
+          {isInspecting ? <p className="muted">Inspecting selected files...</p> : null}
+          <div className="statusGrid">
+            <div><span className="label">Status</span> {lastEvent?.status ?? "idle"}</div>
+            <div><span className="label">Stage</span> {lastEvent?.stage ?? "-"}</div>
+          </div>
+          <div className="progressRow">
+            <progress value={lastEvent?.progress ?? 0} max={1} />
+            <span>{Math.round((lastEvent?.progress ?? 0) * 100)}%</span>
+          </div>
+          <div className="logBox">
+            {logs.map((line, idx) => <div key={idx}>{line}</div>)}
+          </div>
+        </section>
+      </main>
+      <div className="watermark">github.com/vijayvenkatj</div>
+    </div>
   );
 }
