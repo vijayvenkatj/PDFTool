@@ -160,21 +160,29 @@ impl BackendLauncher {
     }
 
     fn find_resource_binary_exact(&self, resource_dir: &Path, names: &[&str]) -> Option<PathBuf> {
+        eprintln!("[find_resource_binary_exact] searching in: {}", resource_dir.display());
         for name in names {
             let direct = resource_dir.join(name);
+            eprintln!("  checking: {}", direct.display());
             if direct.exists() {
+                eprintln!("    ✓ found!");
                 return Some(direct);
             }
             let in_bin = resource_dir.join("bin").join(name);
+            eprintln!("  checking: {}", in_bin.display());
             if in_bin.exists() {
+                eprintln!("    ✓ found!");
                 return Some(in_bin);
             }
         }
         for name in names {
+            eprintln!("  tree search for: {}", name);
             if let Some(found) = self.find_in_tree_limited(resource_dir, name, 6) {
+                eprintln!("    ✓ found via tree: {}", found.display());
                 return Some(found);
             }
         }
+        eprintln!("  ✗ not found in any search");
         None
     }
 
