@@ -109,6 +109,16 @@ fn qpdf_cmd() -> String {
     get_tool_path("qpdf")
 }
 
+fn silent_command(name: String) -> Command {
+    let mut cmd = Command::new(name);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.as_std_mut().creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 pub fn get_tool_path(name: &str) -> String {
     // 1. Try common absolute paths first (more reliable in GUI apps)
     #[cfg(target_os = "macos")]
@@ -130,7 +140,14 @@ pub fn get_tool_path(name: &str) -> String {
 
     // 2. Try default PATH
     let check_cmd = if cfg!(windows) { "where" } else { "which" };
-    if let Ok(out) = std::process::Command::new(check_cmd).arg(name).output() {
+    let mut search_cmd = std::process::Command::new(check_cmd);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        search_cmd.creation_flags(0x08000000);
+    }
+    
+    if let Ok(out) = search_cmd.arg(name).output() {
         if out.status.success() {
             let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !path_str.is_empty() {
@@ -305,7 +322,7 @@ pub async fn run_job(
 
             split_handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
-                let status = Command::new(qpdf_cmd())
+                let status = silent_command(qpdf_cmd())
                     .args(["--warning-exit-0", "--empty", "--pages"])
                     .arg(&src)
                     .arg(&range)
@@ -422,7 +439,7 @@ pub async fn run_job(
         args.push("--linearize".to_string());
         args.push(req.output_path.clone());
 
-        let status = Command::new(qpdf_cmd())
+        let status = silent_command(qpdf_cmd())
             .args(&args)
             .status()
             .await;
@@ -468,7 +485,7 @@ fn build_chunk_ranges(total_pages: usize, num_workers: usize) -> Vec<(usize, usi
 }
 
 async fn get_page_count(path: &std::path::Path) -> Option<usize> {
-    let out = Command::new(qpdf_cmd())
+    let out = silent_command(qpdf_cmd())
         .arg("--show-npages")
         .arg(path)
         .output()
@@ -490,7 +507,7 @@ async fn merge_with_qpdf(files: &[InputFile], out: &std::path::Path) -> bool {
     args.push("--compress-streams=y".to_string());
     args.push(out.to_string_lossy().to_string());
 
-    let result = Command::new(qpdf_cmd())
+    let result = silent_command(qpdf_cmd())
         .args(&args)
         .stderr(Stdio::piped())
         .output()
@@ -509,7 +526,7 @@ async fn merge_with_gs(files: &[InputFile], out: &std::path::Path) -> bool {
     ];
     for f in files { args.push(f.path.clone()); }
 
-    let status = Command::new(gs_cmd()).args(&args).status().await;
+    let status = silent_command(gs_cmd()).args(&args).status().await;
     matches!(status, Ok(s) if s.success()) && out.exists()
 }
 
@@ -543,7 +560,7 @@ async fn compress_chunk(
     s: &GsSettings,
     gs_threads: usize,
 ) -> bool {
-    let status = Command::new(gs_cmd())
+    let status = silent_command(gs_cmd())
         .arg("-sDEVICE=pdfwrite")
         .arg("-dCompatibilityLevel=1.5")   // 1.5 enables better object streams than 1.4
         .arg("-dNOPAUSE")

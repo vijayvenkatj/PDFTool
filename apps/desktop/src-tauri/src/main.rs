@@ -50,14 +50,26 @@ struct HealthStatus {
 #[tauri::command]
 async fn get_health() -> Result<HealthStatus, String> {
     let qpdf_bin = pdf_pipeline::get_tool_path("qpdf");
-    let (qpdf_ok, qpdf_err) = match std::process::Command::new(&qpdf_bin).arg("--version").output() {
+    let mut qpdf_cmd = std::process::Command::new(&qpdf_bin);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        qpdf_cmd.creation_flags(0x08000000);
+    }
+    let (qpdf_ok, qpdf_err) = match qpdf_cmd.arg("--version").output() {
         Ok(out) => (out.status.success(), if out.status.success() { None } else { Some(String::from_utf8_lossy(&out.stderr).to_string()) }),
         Err(e) => (false, Some(e.to_string())),
     };
         
     let gs_name = if cfg!(windows) { "gswin64c" } else { "gs" };
     let gs_bin = pdf_pipeline::get_tool_path(gs_name);
-    let (gs_ok, gs_err) = match std::process::Command::new(&gs_bin).arg("--version").output() {
+    let mut gs_cmd = std::process::Command::new(&gs_bin);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        gs_cmd.creation_flags(0x08000000);
+    }
+    let (gs_ok, gs_err) = match gs_cmd.arg("--version").output() {
         Ok(out) => (out.status.success(), if out.status.success() { None } else { Some(String::from_utf8_lossy(&out.stderr).to_string()) }),
         Err(e) => (false, Some(e.to_string())),
     };
