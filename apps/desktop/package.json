@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "tools:bundle": "bash ./scripts/prepare-bundled-tools.sh",
+    "tools:bundle": "if [ -z \"$GITHUB_ACTIONS\" ]; then bash ./scripts/prepare-bundled-tools.sh; else echo '✓ Tools already staged by CI workflow'; fi",
     "backend:build": "cd ../../backend/go-service && make build",
     "backend:build:release": "cd ../../backend/go-service && make build",
     "pretauri:dev": "npm run backend:build && npm run tools:bundle",
