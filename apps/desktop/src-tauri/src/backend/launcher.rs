@@ -113,7 +113,9 @@ impl BackendLauncher {
 
     fn backend_binary_path(&self, app: &tauri::AppHandle) -> Result<PathBuf, String> {
         if let Ok(explicit) = std::env::var("PDFTOOL_BACKEND_PATH") {
-            return Ok(PathBuf::from(explicit));
+            if let Some(clean) = self.sanitize_path_string(&explicit) {
+                return Ok(PathBuf::from(clean));
+            }
         }
         let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
         #[cfg(target_os = "windows")]
@@ -196,18 +198,20 @@ impl BackendLauncher {
         bundled_names: &[&str],
     ) -> Option<String> {
         if let Ok(v) = std::env::var(var_name) {
-            if !v.trim().is_empty() {
-                return Some(v);
+            if let Some(clean) = self.sanitize_path_string(&v) {
+                return Some(clean);
             }
         }
         if let Ok(resource_dir) = app.path().resource_dir() {
             if let Some(p) = self.find_resource_binary(&resource_dir, bundled_names) {
-                return Some(p.to_string_lossy().to_string());
+                return self.sanitize_path_string(&p.to_string_lossy());
             }
         }
         for candidate in candidates {
             if Path::new(candidate).exists() {
-                return Some((*candidate).to_string());
+                if let Some(clean) = self.sanitize_path_string(candidate) {
+                    return Some(clean);
+                }
             }
         }
         #[cfg(target_os = "windows")]
@@ -223,8 +227,8 @@ impl BackendLauncher {
                     .unwrap_or_default()
                     .trim()
                     .to_string();
-                if !resolved.is_empty() {
-                    return Some(resolved);
+                if let Some(clean) = self.sanitize_path_string(&resolved) {
+                    return Some(clean);
                 }
             }
         }
@@ -232,12 +236,33 @@ impl BackendLauncher {
         if let Ok(output) = Command::new("which").arg(fallback_name).output() {
             if output.status.success() {
                 let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !resolved.is_empty() {
-                    return Some(resolved);
+                if let Some(clean) = self.sanitize_path_string(&resolved) {
+                    return Some(clean);
                 }
             }
         }
         None
+    }
+
+    fn sanitize_path_string(&self, raw: &str) -> Option<String> {
+        let mut trimmed = raw.trim().trim_matches('"').trim_matches('\'').to_string();
+        trimmed.retain(|c| c != '\0' && c != '\r' && c != '\n');
+        #[cfg(target_os = "windows")]
+        {
+            let bytes = trimmed.as_bytes();
+            if bytes.len() >= 4
+                && (bytes[0] == b'\\' || bytes[0] == b'/')
+                && bytes[2] == b':'
+                && (bytes[3] == b'\\' || bytes[3] == b'/')
+                && bytes[1].is_ascii_alphabetic()
+            {
+                trimmed = trimmed[1..].to_string();
+            }
+        }
+        if trimmed.is_empty() || trimmed.contains('*') || trimmed.contains('?') {
+            return None;
+        }
+        Some(trimmed)
     }
 
     fn resolve_qpdf_binary(&self, app: &tauri::AppHandle) -> Option<String> {

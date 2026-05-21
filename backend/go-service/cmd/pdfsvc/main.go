@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"pdftool/backend/go-service/internal/api"
 	"pdftool/backend/go-service/internal/job"
@@ -17,6 +18,8 @@ func main() {
 	qpdfPath := flag.String("qpdf", envOrDefault("PDFTOOL_QPDF_PATH", "qpdf"), "qpdf binary path")
 	gsPath := flag.String("gs", envOrDefault("PDFTOOL_GS_PATH", defaultGSBinary()), "ghostscript binary path")
 	flag.Parse()
+	*qpdfPath = normalizePathArg(*qpdfPath)
+	*gsPath = normalizePathArg(*gsPath)
 
 	broker := progress.NewBroker()
 	tools := pipeline.ToolPaths{
@@ -45,4 +48,22 @@ func defaultGSBinary() string {
 		return "gswin64c"
 	}
 	return "gs"
+}
+
+func normalizePathArg(v string) string {
+	trimmed := strings.TrimSpace(v)
+	trimmed = strings.Trim(trimmed, "\"'")
+	trimmed = strings.ReplaceAll(trimmed, "\r", "")
+	trimmed = strings.ReplaceAll(trimmed, "\n", "")
+	if len(trimmed) >= 4 &&
+		(trimmed[0] == '\\' || trimmed[0] == '/') &&
+		trimmed[2] == ':' &&
+		(trimmed[3] == '\\' || trimmed[3] == '/') &&
+		((trimmed[1] >= 'a' && trimmed[1] <= 'z') || (trimmed[1] >= 'A' && trimmed[1] <= 'Z')) {
+		trimmed = trimmed[1:]
+	}
+	if trimmed == "" {
+		return v
+	}
+	return trimmed
 }
