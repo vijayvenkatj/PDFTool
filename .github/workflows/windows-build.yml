@@ -34,6 +34,13 @@ jobs:
           if (-not (Test-Path bin)) { mkdir bin }
           go build -o bin/pdfsvc.exe ./cmd/pdfsvc
 
+      - name: Stage backend for bundling
+        run: |
+          if (-not (Test-Path apps/desktop/src-tauri/resources/bin)) {
+            New-Item -ItemType Directory -Path apps/desktop/src-tauri/resources/bin -Force | Out-Null
+          }
+          Copy-Item backend/go-service/bin/pdfsvc.exe apps/desktop/src-tauri/resources/bin/
+
       - name: Install dependencies
         run: |
           cd apps/desktop
