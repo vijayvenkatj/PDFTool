@@ -1,33 +1,12 @@
 import { DragEvent, useEffect, useMemo, useState } from "react";
-import { cancelJob, createJob, getHealth, inspectFiles, subscribeEvents } from "./lib/api";
+import { cancelJob, createJob, getHealth, getThumbnail, inspectFiles, subscribeEvents } from "./lib/api";
 import { BackendHealth, CompressionPreset, InputFile, JobEvent } from "./lib/types";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-const DEFAULT_MAX_FILES = 100;
-const MAX_FILES_LIMIT = 100;
-const MAX_WORKERS_LIMIT = 8;
-
-function readDroppedFiles(event: DragEvent<HTMLDivElement>): InputFile[] {
-  const files = Array.from(event.dataTransfer.files);
-  return files
-    .filter((f) => f.name.toLowerCase().endsWith(".pdf"))
-    .map((f) => ({
-      path: (f as File & { path?: string }).path ?? "",
-      name: f.name,
-      sizeBytes: f.size
-    }))
-    .filter((f) => f.path.length > 0);
-}
-
-function toInputFile(path: string): InputFile {
-  const parts = path.split(/[\\/]/);
-  return {
-    path,
-    name: parts[parts.length - 1] ?? path,
-    sizeBytes: 0
-  };
-}
+const DEFAULT_MAX_FILES = 500;
+const MAX_FILES_LIMIT = 1000;
+const MAX_WORKERS_LIMIT = 16;
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -42,10 +21,13 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(precision)} ${units[idx]}`;
 }
 
-function formatToolIssue(tool: { ok: boolean; path: string; error?: string }, label: string): string {
-  if (tool.ok) return `${label}: ok`;
-  const reason = tool.error ? ` (${tool.error})` : "";
-  return `${label}: missing/unusable at ${tool.path}${reason}`;
+function toInputFile(path: string): InputFile {
+  const parts = path.split(/[\\/]/);
+  return {
+    path,
+    name: parts[parts.length - 1] ?? path,
+    sizeBytes: 0
+  };
 }
 
 export function App() {
@@ -60,22 +42,9 @@ export function App() {
   const [health, setHealth] = useState<BackendHealth | null>(null);
   const [isInspecting, setIsInspecting] = useState(false);
   const [isDropActive, setIsDropActive] = useState(false);
-  const [startupError, setStartupError] = useState<string | null>(null);
-  const [runtimeState, setRuntimeState] = useState<"checking" | "ok" | "degraded">("checking");
   const [showHelp, setShowHelp] = useState(false);
+
   const canStart = files.length > 0 && outputPath.length > 0 && !activeJobId && health?.status === "ok" && !isInspecting;
-  const runDisabledReason =
-    files.length === 0
-      ? "Add at least one PDF file."
-      : !outputPath
-        ? "Choose an output location."
-        : health?.status !== "ok"
-          ? "Runtime tools are not ready."
-          : isInspecting
-            ? "Please wait for file inspection."
-            : activeJobId
-              ? "A job is already running."
-              : "";
 
   const addFiles = async (incoming: InputFile[]) => {
     const candidatePaths = incoming
@@ -86,78 +55,66 @@ export function App() {
     setIsInspecting(true);
     try {
       const inspected = await inspectFiles(candidatePaths);
-      const good = inspected.files
-        .filter((f) => f.exists && f.sizeBytes >= 0)
-        .map((f) => ({
-          path: f.path,
-          name: f.name,
-          sizeBytes: f.sizeBytes
-        }));
-      const bad = inspected.files.filter((f) => !f.exists || !!f.error);
-      if (bad.length > 0) {
-        setLogs((x) => [`skipped ${bad.length} invalid file(s)`, ...x].slice(0, 200));
-      }
+      const good = inspected.files.filter((f) => f.exists && f.sizeBytes >= 0);
+      
+      const filesWithThumbs = await Promise.all(
+        good.map(async (f) => {
+          try {
+            const thumb = await getThumbnail(f.path);
+            return {
+              path: f.path,
+              name: f.name,
+              sizeBytes: f.sizeBytes,
+              pageCount: f.pageCount,
+              thumbnail: thumb
+            };
+          } catch (e) {
+            return {
+              path: f.path,
+              name: f.name,
+              sizeBytes: f.sizeBytes,
+              pageCount: f.pageCount
+            };
+          }
+        })
+      );
+
       setFiles((current) => {
         const seen = new Set(current.map((f) => f.path));
-        const unique = good.filter((f) => !seen.has(f.path));
+        const unique = filesWithThumbs.filter((f) => !seen.has(f.path));
         return [...current, ...unique].slice(0, Math.min(maxFiles, MAX_FILES_LIMIT));
       });
     } catch (err) {
-      setLogs((x) => [`file inspect failed: ${String(err)}`, ...x].slice(0, 200));
+      setLogs((x) => [`Error: ${String(err)}`, ...x]);
     } finally {
       setIsInspecting(false);
     }
   };
 
   useEffect(() => {
-    setStartupError(null);
-    setRuntimeState("checking");
     const checkHealth = async () => {
-        try {
-            const h = await getHealth();
-            setHealth(h);
-            setRuntimeState(h.status === "ok" ? "ok" : "degraded");
-            if (h.status !== "ok") {
-              const detail = [
-                formatToolIssue(h.qpdf, "qpdf"),
-                formatToolIssue(h.ghostscript, "ghostscript")
-              ].join(" | ");
-              setLogs((x) => [`runtime health degraded: ${detail}`, ...x].slice(0, 200));
-            }
-        } catch (err) {
-            setRuntimeState("degraded");
-            setLogs((x) => [`health check error: ${String(err)}`, ...x].slice(0, 200));
-        }
-    };
-    
-    checkHealth();
-
-    const unsub = subscribeEvents((evt) => {
-      setLastEvent(evt);
-      setLogs((x) => [`${evt.stage}: ${evt.message}`, ...x].slice(0, 200));
-      if (evt.status === "completed" || evt.status === "failed" || evt.status === "cancelled") {
-        setActiveJobId((id) => (id === evt.jobId ? null : id));
-      }
-    });
-    return () => {
-      unsub();
-    };
-  }, []);
-
-  useEffect(() => {
-    const timer = setInterval(async () => {
       try {
         const h = await getHealth();
         setHealth(h);
-        setRuntimeState(h.status === "ok" ? "ok" : "degraded");
-      } catch {
-        if (health) {
-          setRuntimeState("degraded");
-        }
+      } catch (err) {
+        setLogs((x) => [`Health check failed: ${String(err)}`, ...x]);
       }
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [health]);
+    };
+    checkHealth();
+    const timer = setInterval(checkHealth, 5000);
+
+    const unsub = subscribeEvents((evt) => {
+      setLastEvent(evt);
+      if (evt.status === "completed" || evt.status === "failed" || evt.status === "cancelled") {
+        setActiveJobId(null);
+      }
+    });
+
+    return () => {
+      clearInterval(timer);
+      unsub();
+    };
+  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -168,23 +125,9 @@ export function App() {
           void addFiles(dropped);
         }
       })
-      .then((fn) => {
-        unlisten = fn;
-      })
-      .catch((err) => {
-        setLogs((x) => [`drag-drop listener error: ${String(err)}`, ...x]);
-      });
-    return () => {
-      if (unlisten) unlisten();
-    };
+      .then((fn) => { unlisten = fn; });
+    return () => { if (unlisten) unlisten(); };
   }, [maxFiles]);
-
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setIsDropActive(false);
-    const dropped = readDroppedFiles(event);
-    void addFiles(dropped);
-  };
 
   const selectFiles = async () => {
     const selected = await open({
@@ -199,135 +142,126 @@ export function App() {
   const selectOutput = async () => {
     const selected = await save({
       filters: [{ name: "PDF", extensions: ["pdf"] }],
-      defaultPath: "output.pdf"
+      defaultPath: "merged_and_compressed.pdf"
     });
     if (selected) setOutputPath(String(selected));
   };
 
   const totalBytes = useMemo(() => files.reduce((sum, f) => sum + f.sizeBytes, 0), [files]);
   const progressValue = Math.max(0, Math.min(1, lastEvent?.progress ?? 0));
-  const progressLabel = `${Math.round(progressValue * 100)}%`;
 
   return (
     <div className="app">
       {showHelp && (
         <div className="modalOverlay" onClick={() => setShowHelp(false)}>
-          <div className="modalContent" onClick={(e) => e.stopPropagation()}>
-            <div className="modalHeader">
-              <h2>How to use PDF Tool</h2>
-              <button className="btnClose" onClick={() => setShowHelp(false)}>×</button>
-            </div>
-            <div className="modalBody">
-              <ol>
-                <li>
-                  <strong>Install Dependencies:</strong> Ensure <code>qpdf</code> and <code>ghostscript</code> are installed on your system.
-                  <ul>
-                    <li>macOS: <code>brew install qpdf ghostscript</code></li>
-                    <li>Windows: <code>choco install qpdf ghostscript</code></li>
-                  </ul>
-                </li>
-                <li>
-                  <strong>Add Files:</strong> Drag and drop PDF files into the "Input" section or use the "Choose PDF files" button.
-                </li>
-                <li>
-                  <strong>Reorder:</strong> Drag and drop files in the "Files" list to change the merge order.
-                </li>
-                <li>
-                  <strong>Select Preset:</strong> Choose a compression level. "Merge only" will simply combine files without reducing size.
-                </li>
-                <li>
-                  <strong>Set Output:</strong> Choose where to save the resulting PDF using the "Browse" button.
-                </li>
-                <li>
-                  <strong>Run:</strong> Click "Start" to begin the process. You can monitor progress in the logs.
-                </li>
-              </ol>
-              <p className="note">Note: This tool works entirely offline. Your files never leave your computer.</p>
-            </div>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h2>How to use PDF Tool</h2>
+            <p>1. Drag and drop PDF files into the grid.</p>
+            <p>2. Reorder files by dragging them around.</p>
+            <p>3. Choose a compression preset in the sidebar.</p>
+            <p>4. Select where to save your output.</p>
+            <p>5. Click Start and watch the magic happen.</p>
+            <button className="btnPrimary" onClick={() => setShowHelp(false)}>Got it</button>
           </div>
         </div>
       )}
 
-      <header className="appHeader">
-        <div className="headerLeft">
-          <div>
-            <h1>PDF Tool</h1>
-            <p className="subtitle">Compress and merge PDFs offline.</p>
-          </div>
-          <button className="btnInfo" onClick={() => setShowHelp(true)} title="How to use">i</button>
-        </div>
-        <div className="headerStatus">
-          <div className="statusRow">
-            <span className="label">Runtime</span>
-            <span className={`status ${runtimeState}`}>{runtimeState}</span>
-          </div>
-          <div className="toolRow">
-            qpdf: {health ? (health.qpdf.ok ? "ok" : "missing") : "-"} | ghostscript: {health ? (health.ghostscript.ok ? "ok" : "missing") : "-"}
-          </div>
-        </div>
-      </header>
+      <aside className="sidebar">
+        <header className="sidebarHeader">
+          <h1>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+            PDF Tool
+          </h1>
+        </header>
 
-      <main className="grid">
-        <section className="panel">
-          <div className="panelHeader">
-            <h2>Input</h2>
-            <button className="btnGhost" onClick={selectFiles}>Choose PDF files</button>
-          </div>
-          <div
-            className={`dropzone ${isDropActive ? "active" : ""}`}
-            onDragOver={(e) => {
-              e.preventDefault();
-              if (!isDropActive) setIsDropActive(true);
+        <div className="sidebarSection">
+          <label>Compression</label>
+          <select value={preset} onChange={(e) => setPreset(e.target.value as CompressionPreset)}>
+            <option value="none">Merge Only (Fastest)</option>
+            <option value="low">Low (Highest Quality)</option>
+            <option value="medium">Medium (Recommended)</option>
+            <option value="high">High (Small Size)</option>
+            <option value="aggressive">Aggressive (Smallest)</option>
+          </select>
+        </div>
+
+        <div className="sidebarSection">
+          <label>Output Location</label>
+          <button className="btnSecondary" onClick={selectOutput}>
+            {outputPath ? "Change Output..." : "Choose Save Path..."}
+          </button>
+          {outputPath && <div className="cardMeta" style={{wordBreak:'break-all'}}>{outputPath}</div>}
+        </div>
+
+        <div className="sidebarSection" style={{marginTop: 'auto'}}>
+          <button 
+            className="btnPrimary" 
+            disabled={!canStart}
+            onClick={async () => {
+              const res = await createJob({ files, preset, outputPath, maxWorkers: 1 });
+              setActiveJobId(res.jobId);
+              setLogs([]);
             }}
-            onDragLeave={() => setIsDropActive(false)}
-            onDrop={onDrop}
           >
-            <strong>Drop PDFs here</strong>
-            <span>or use the button above</span>
-          </div>
-          <div className="row">
-            <label>Max files</label>
-            <input
-              type="number"
-              min={1}
-              max={MAX_FILES_LIMIT}
-              value={maxFiles}
-              onChange={(e) => setMaxFiles(Math.max(1, Math.min(MAX_FILES_LIMIT, Number(e.target.value || DEFAULT_MAX_FILES))))}
-            />
-          </div>
-          <div className="row">
-            <label>Preset</label>
-            <select value={preset} onChange={(e) => setPreset(e.target.value as CompressionPreset)}>
-              <option value="none">Fast Merge & Optimize (No image reduction)</option>
-              <option value="low">Low Compression (High Quality)</option>
-              <option value="medium">Medium Compression</option>
-              <option value="high">High Compression</option>
-              <option value="aggressive">Aggressive Compression</option>
-            </select>
-          </div>
-          <div className="row">
-            <label>Output file path</label>
-            <input value={outputPath} onChange={(e) => setOutputPath(e.target.value)} placeholder="/path/to/output.pdf" />
-            <button className="btnGhost" onClick={selectOutput}>Browse</button>
-          </div>
-        </section>
+            {activeJobId ? "Processing..." : "Start Process"}
+          </button>
+          {activeJobId && (
+            <button className="btnSecondary" onClick={() => cancelJob(activeJobId)}>
+              Cancel Job
+            </button>
+          )}
+        </div>
 
-        <section className="panel">
-          <div className="panelHeader">
-            <div>
-              <h2>Files</h2>
-              <p className="muted">{files.length} files · {formatBytes(totalBytes)}</p>
-            </div>
-            <button className="btnGhost" onClick={() => setFiles([])} disabled={files.length === 0 || !!activeJobId}>Clear</button>
+        <div className="sidebarSection">
+          <div className="runtimeStatus">
+            <div className={`indicator ${health?.status ?? 'error'}`} />
+            {health?.status === 'ok' ? 'System Ready' : 'System Degraded'}
           </div>
-          <p className="muted">Drag to reorder</p>
+          <button className="btnSecondary" style={{fontSize: '11px'}} onClick={() => setShowHelp(true)}>Help & Instructions</button>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="topBar">
+          <div className="fileStats">
+            <span><strong>{files.length}</strong> Files</span>
+            <span><strong>{formatBytes(totalBytes)}</strong> Total</span>
+          </div>
+          <div className="row">
+            <button className="btnSecondary" onClick={selectFiles}>Add Files</button>
+            <button className="btnSecondary" style={{color: '#ef4444'}} onClick={() => setFiles([])} disabled={files.length === 0 || !!activeJobId}>Clear All</button>
+          </div>
+        </header>
+
+        <div 
+          className="dropzoneContainer"
+          onDragOver={(e) => { e.preventDefault(); setIsDropActive(true); }}
+          onDragLeave={() => setIsDropActive(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDropActive(false);
+            const dropped = Array.from(e.dataTransfer.files)
+              .filter(f => f.name.toLowerCase().endsWith('.pdf'))
+              .map(f => ({ path: (f as any).path, name: f.name, sizeBytes: f.size }));
+            addFiles(dropped as any);
+          }}
+        >
+          <div className={`dropzoneOverlay ${isDropActive ? 'active' : ''}`}>
+            <h2>Drop PDFs here to add</h2>
+          </div>
+
           {files.length === 0 ? (
-            <div className="emptyState">No files added yet.</div>
+            <div className="emptyState">
+              <div className="icon">📄</div>
+              <h2>No PDFs added yet</h2>
+              <p>Drag and drop files here or use the button above</p>
+            </div>
           ) : (
-            <ol className="fileList">
+            <div className="fileGrid">
               {files.map((f, i) => (
-                <li
+                <div 
                   key={`${f.path}-${i}`}
+                  className={`fileCard ${draggingIndex === i ? 'dragging' : ''}`}
                   draggable
                   onDragStart={() => setDraggingIndex(i)}
                   onDragOver={(e) => e.preventDefault()}
@@ -343,62 +277,44 @@ export function App() {
                     setDraggingIndex(null);
                   }}
                 >
-                  <div className="fileMeta">
-                    <span className="fileIndex">{i + 1}.</span>
-                    <span className="fileName">{f.name}</span>
-                    <span className="fileSize">{formatBytes(f.sizeBytes)}</span>
+                  <button className="btnRemove" onClick={() => setFiles(arr => arr.filter((_, idx) => idx !== i))}>×</button>
+                  <div className="thumbContainer">
+                    {f.thumbnail ? (
+                      <img src={f.thumbnail} alt={f.name} />
+                    ) : (
+                      <div className="noThumb">{isInspecting ? "Loading..." : "No Preview"}</div>
+                    )}
                   </div>
-                  <button className="btnGhost" disabled={!!activeJobId} onClick={() => setFiles((arr) => arr.filter((_, idx) => idx !== i))}>Remove</button>
-                </li>
+                  <div className="cardInfo">
+                    <div className="cardName" title={f.name}>{f.name}</div>
+                    <div className="cardMeta">
+                      <span>{f.pageCount} pages</span>
+                      <span>{formatBytes(f.sizeBytes)}</span>
+                    </div>
+                  </div>
+                </div>
               ))}
-            </ol>
+            </div>
           )}
-        </section>
+        </div>
 
-        <section className="panel">
-          <div className="panelHeader">
-            <h2>Run</h2>
-          </div>
-          <div className="row">
-            <button
-              className="btnPrimary"
-              disabled={!canStart}
-              onClick={async () => {
-                const res = await createJob({ files, preset, outputPath, maxWorkers: 1 });
-                setActiveJobId(res.jobId);
-              }}
-            >
-              {activeJobId ? "Running..." : "Start"}
-            </button>
-            <button
-              className="btnGhost"
-              disabled={!activeJobId}
-              onClick={async () => {
-                if (activeJobId) {
-                  await cancelJob(activeJobId);
-                }
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-          {startupError ? <p className="warning">{startupError}</p> : null}
-          {isInspecting ? <p className="muted">Inspecting selected files...</p> : null}
-          {!canStart && !startupError ? <p className="muted">{runDisabledReason}</p> : null}
-          <div className="statusGrid">
-            <div><span className="label">Status</span> {lastEvent?.status ?? "idle"}</div>
-            <div><span className="label">Stage</span> {lastEvent?.stage ?? "-"}</div>
-          </div>
-          <div className="progressRow">
-            <progress value={progressValue} max={1} />
-            <span>{progressLabel}</span>
-          </div>
-          <div className="logBox">
-            {logs.map((line, idx) => <div key={idx}>{line}</div>)}
-          </div>
-        </section>
+        {(activeJobId || lastEvent) && (
+          <footer className="statusPanel">
+            <div className="progressBar">
+              <div className="progressFill" style={{width: `${progressValue * 100}%`}} />
+            </div>
+            <div className="statusInfo">
+              <span>{lastEvent?.message || "Preparing..."}</span>
+              <span>{Math.round(progressValue * 100)}%</span>
+            </div>
+            {logs.length > 0 && (
+              <div className="logs">
+                {logs.map((l, i) => <div key={i}>{l}</div>)}
+              </div>
+            )}
+          </footer>
+        )}
       </main>
-      <div className="watermark">github.com/vijayvenkatj</div>
     </div>
   );
 }

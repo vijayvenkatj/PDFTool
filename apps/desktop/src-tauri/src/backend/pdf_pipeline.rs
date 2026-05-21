@@ -55,6 +55,8 @@ pub struct InspectedFile {
     #[serde(rename = "sizeBytes")]
     pub size_bytes: u64,
     pub error: Option<String>,
+    #[serde(rename = "pageCount")]
+    pub page_count: usize,
 }
 
 pub struct PipelineState {
@@ -586,16 +588,66 @@ async fn compress_chunk(
     matches!(status, Ok(s) if s.success())
 }
 
+pub async fn get_thumbnail(path: String) -> Result<String, String> {
+    let gs = gs_cmd();
+    let temp_dir = std::env::temp_dir();
+    let thumb_path = temp_dir.join(format!("thumb_{}.png", Uuid::new_v4()));
+
+    let output = silent_command(gs)
+        .arg("-sDEVICE=png16m")
+        .arg("-dLastPage=1")
+        .arg("-dPDFFitPage")
+        .arg("-g300x400")
+        .arg("-dQUIET")
+        .arg("-dBATCH")
+        .arg("-dNOPAUSE")
+        .arg(format!("-sOutputFile={}", thumb_path.to_string_lossy()))
+        .arg(&path)
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let bytes = std::fs::read(&thumb_path).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&thumb_path);
+
+    Ok(format!("data:image/png;base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes)))
+}
+
 pub fn inspect_files(paths: Vec<String>) -> Vec<InspectedFile> {
-    paths.into_iter().map(|p| {
-        let path = PathBuf::from(&p);
-        let name = path.file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| p.clone());
-        let (exists, size_bytes, error) = match std::fs::metadata(&path) {
-            Ok(meta) => (true, meta.len(), None),
-            Err(e)   => (false, 0, Some(e.to_string())),
-        };
-        InspectedFile { path: p, name, exists, size_bytes, error }
-    }).collect()
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let mut handles = Vec::new();
+        for p in paths {
+            handles.push(tokio::spawn(async move {
+                let path = PathBuf::from(&p);
+                let name = path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| p.clone());
+                let (exists, size_bytes, error) = match std::fs::metadata(&path) {
+                    Ok(meta) => (true, meta.len(), None),
+                    Err(e)   => (false, 0, Some(e.to_string())),
+                };
+
+                let page_count = if exists {
+                    get_page_count(&path).await.unwrap_or(0)
+                } else {
+                    0
+                };
+
+                InspectedFile { path: p, name, exists, size_bytes, error, page_count }
+            }));
+        }
+
+        let mut results = Vec::new();
+        for h in handles {
+            if let Ok(res) = h.await {
+                results.push(res);
+            }
+        }
+        results
+    })
 }

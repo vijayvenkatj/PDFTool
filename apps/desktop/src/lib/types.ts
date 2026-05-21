@@ -4,6 +4,8 @@ export interface InputFile {
   path: string;
   name: string;
   sizeBytes: number;
+  pageCount?: number;
+  thumbnail?: string;
 }
 
 export interface CreateJobRequest {
@@ -23,6 +25,7 @@ export interface InspectedFile {
   sizeBytes: number;
   exists: boolean;
   error?: string;
+  pageCount: number;
 }
 
 export interface InspectFilesResponse {

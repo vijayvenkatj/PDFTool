@@ -12,6 +12,10 @@ export async function inspectFiles(paths: string[]): Promise<InspectFilesRespons
   return { files };
 }
 
+export async function getThumbnail(path: string): Promise<string> {
+  return (await invoke("get_thumbnail", { path })) as string;
+}
+
 export async function getHealth(): Promise<BackendHealth> {
   return (await invoke("get_health")) as BackendHealth;
 }

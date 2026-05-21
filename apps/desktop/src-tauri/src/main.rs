@@ -30,6 +30,11 @@ fn inspect_files(paths: Vec<String>) -> Result<Vec<InspectedFile>, String> {
     Ok(pdf_pipeline::inspect_files(paths))
 }
 
+#[tauri::command]
+async fn get_thumbnail(path: String) -> Result<String, String> {
+    pdf_pipeline::get_thumbnail(path).await
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ToolStatus {
@@ -101,6 +106,7 @@ fn main() {
             create_job,
             cancel_job,
             inspect_files,
+            get_thumbnail,
             get_health
         ])
         .run(tauri::generate_context!())

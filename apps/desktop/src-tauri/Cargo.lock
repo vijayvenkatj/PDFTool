@@ -2110,6 +2110,7 @@ dependencies = [
 name = "pdf-tool"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "once_cell",
  "serde",
  "serde_json",
