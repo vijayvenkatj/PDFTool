@@ -33,7 +33,9 @@ jobs:
 
       - name: Stage bundled tools
         run: |
-          mkdir -p apps/desktop/src-tauri/resources/bin
+          if (-not (Test-Path apps/desktop/src-tauri/resources/bin)) {
+            New-Item -ItemType Directory -Path apps/desktop/src-tauri/resources/bin -Force | Out-Null
+          }
           
           # Find and copy qpdf
           $qpdf = (Get-Command qpdf.exe -ErrorAction SilentlyContinue).Source
