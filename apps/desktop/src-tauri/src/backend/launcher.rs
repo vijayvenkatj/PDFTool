@@ -222,4 +222,24 @@ impl BackendLauncher {
                 })
             });
     }
+
+    pub fn stop(&self, child: &mut Option<Child>) {
+        if let Some(mut c) = child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
+    pub fn status(&self, child: &Option<Child>) -> String {
+        match child {
+            Some(c) => {
+                if c.stdout.is_some() {
+                    "running".to_string()
+                } else {
+                    "stopped".to_string()
+                }
+            }
+            None => "stopped".to_string(),
+        }
+    }
 }
