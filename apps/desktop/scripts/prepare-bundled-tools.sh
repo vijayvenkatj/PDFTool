@@ -2,9 +2,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BIN_DIR="$ROOT_DIR/../../backend/go-service/bin"
+STAGE_DIR="$ROOT_DIR/src-tauri/resources/bin"
 
-mkdir -p "$BIN_DIR"
+mkdir -p "$STAGE_DIR"
+
+# On CI/CD (GitHub Actions), tools are already staged by workflows
+# This script is mainly for local development
+if [[ -n "${CI:-}" ]]; then
+  if [[ -f "$STAGE_DIR/qpdf" ]] || [[ -f "$STAGE_DIR/qpdf.exe" ]]; then
+    echo "Tools already staged for CI build"
+    exit 0
+  fi
+fi
 
 copy_tool() {
   local src="$1"
@@ -38,28 +47,38 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "ghostscript not found. Install with: brew install ghostscript" >&2
     exit 1
   fi
-  copy_tool "$QPDF_PATH" "$BIN_DIR/qpdf"
-  copy_tool "$GS_PATH" "$BIN_DIR/gs"
+  copy_tool "$QPDF_PATH" "$STAGE_DIR/qpdf"
+  copy_tool "$GS_PATH" "$STAGE_DIR/gs"
   echo "Bundled macOS tools: qpdf, gs"
   exit 0
 fi
 
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+  # On local Windows dev, require env vars; on CI they're already staged
   QPDF_PATH="${PDFTOOL_QPDF_PATH:-}"
   GS_PATH="${PDFTOOL_GS_PATH:-}"
   if [[ -z "${QPDF_PATH}" || ! -f "${QPDF_PATH}" ]]; then
-    echo "Set PDFTOOL_QPDF_PATH to qpdf.exe location" >&2
+    if [[ -n "${CI:-}" ]]; then
+      echo "CI environment: tools should be staged by workflow" >&2
+    else
+      echo "For local Windows dev, set PDFTOOL_QPDF_PATH=C:\\Program Files\\qpdf\\bin\\qpdf.exe" >&2
+    fi
     exit 1
   fi
   if [[ -z "${GS_PATH}" || ! -f "${GS_PATH}" ]]; then
-    echo "Set PDFTOOL_GS_PATH to gswin64c.exe location" >&2
+    if [[ -n "${CI:-}" ]]; then
+      echo "CI environment: tools should be staged by workflow" >&2
+    else
+      echo "For local Windows dev, set PDFTOOL_GS_PATH=C:\\Program Files\\gs\\gs...\\bin\\gswin64c.exe" >&2
+    fi
     exit 1
   fi
-  copy_tool "$QPDF_PATH" "$BIN_DIR/qpdf.exe"
-  copy_tool "$GS_PATH" "$BIN_DIR/gswin64c.exe"
+  copy_tool "$QPDF_PATH" "$STAGE_DIR/qpdf.exe"
+  copy_tool "$GS_PATH" "$STAGE_DIR/gswin64c.exe"
   echo "Bundled Windows tools: qpdf.exe, gswin64c.exe"
   exit 0
 fi
 
 echo "Unsupported OSTYPE: $OSTYPE" >&2
 exit 1
+
