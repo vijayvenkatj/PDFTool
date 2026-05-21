@@ -4,15 +4,14 @@ Production-oriented desktop PDF compressor + merger.
 
 ## Stack
 
-- Desktop shell: Tauri
+- Desktop shell: Tauri (Rust backend)
 - UI: React + TypeScript
-- Processing backend: Go sidecar service
-- PDF engines: qpdf + Ghostscript
+- PDF engines: qpdf + Ghostscript (Sidecars)
 
 ## Project Layout
 
 - `apps/desktop`: Tauri + React app
-- `backend/go-service`: Go job manager and subprocess orchestrator
+- `apps/desktop/src-tauri/src/backend`: Rust logic for PDF pipeline
 - `docs`: packaging and ops notes
 
 ## macOS Dev Setup
@@ -24,18 +23,15 @@ Production-oriented desktop PDF compressor + merger.
    - `npm install`
    - `npm run tauri:dev`
 
-`npm run tauri:dev` now auto-builds the Go backend sidecar and bundles qpdf/ghostscript tools before launch.
-
 ## Notes
 
-- Backend listens on `127.0.0.1:47832`.
-- Frontend subscribes to SSE job progress from `/v1/events`.
-- Cancellation endpoint: `POST /v1/jobs/{jobId}/cancel`.
-- Runtime preflight endpoint: `GET /v1/health` (checks `qpdf` and `ghostscript`).
-- File metadata endpoint: `POST /v1/files/inspect` (accurate file sizes from backend FS view).
-- Production-like tool path overrides:
-  - `PDFTOOL_QPDF_PATH`
-  - `PDFTOOL_GS_PATH`
+- Frontend invokes Rust commands directly.
+- Cancellation: Handled via Rust state management.
+- Runtime preflight: `get_health` command checks `qpdf` and `ghostscript`.
+- File metadata: `inspect_files` command provides accurate file sizes.
+- Production-like tool path overrides (via sidecars):
+  - `qpdf`
+  - `ghostscript` (gswin64c on Windows)
 
 ## Build App Bundle
 
@@ -43,6 +39,36 @@ From `apps/desktop`:
 
 - `npm run tauri:build`
 
-This auto-builds the Go sidecar and bundles qpdf/ghostscript before packaging.
-
 The produced app bundle is self-contained for the build platform.
+
+## GitHub Releases (CI/CD)
+
+The project includes a GitHub Actions workflow that automatically builds and releases the application for Windows and macOS.
+
+To trigger a new release:
+1. Update the version in `apps/desktop/package.json` and `apps/desktop/src-tauri/Cargo.toml`.
+2. Push a new tag to GitHub:
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+3. The workflow will build the installers and create a new GitHub Release automatically.
+
+## Usage Guide
+
+1. **System Dependencies**: Ensure `qpdf` and `ghostscript` are installed and available in your PATH.
+   - **macOS**: `brew install qpdf ghostscript`
+   - **Windows**: `choco install qpdf ghostscript` (or install manually and add to PATH)
+2. **Launch Application**: Open PDFTool.
+3. **Add PDFs**: Use the "Choose PDF files" button or drag and drop files into the app.
+4. **Arrange**: Drag and drop files in the list to set the merge order.
+5. **Configure**:
+   - Select a **Compression Preset** (from "None" to "Aggressive").
+   - Set the **Output File Path** using the Browse button.
+6. **Process**: Click **Start**. The logs will show the progress of merging and compression.
+7. **Done**: Your processed PDF will be saved at the specified location.
+
+## Troubleshooting
+
+- **Degraded Status**: If the app shows "degraded" runtime status, it means `qpdf` or `gs` (Ghostscript) was not found. Verify your installation and ensure they are in your system's PATH.
+- **Merge/Compression Failed**: Check the logs for specific error messages from the underlying tools.

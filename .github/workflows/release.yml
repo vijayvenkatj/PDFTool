@@ -1,92 +1,53 @@
-name: release
-
+name: Release
 on:
   push:
     tags:
-      - "v*"
-
-permissions:
-  contents: write
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
-  build:
-    name: build-${{ matrix.target.name }}
-    runs-on: ${{ matrix.target.os }}
+  release:
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - name: windows
-            os: windows-latest
-          - name: macos
-            os: macos-latest
-    steps:
-      - uses: actions/checkout@v4
+        include:
+          - platform: windows-latest
+          - platform: macos-latest
 
-      - uses: actions/setup-node@v4
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Node.js)
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: lts/*
+          cache: 'npm'
           cache-dependency-path: apps/desktop/package-lock.json
 
-      - uses: actions/setup-go@v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
         with:
-          go-version-file: backend/go-service/go.mod
-          cache: true
+          workspaces: apps/desktop/src-tauri -> target
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm install
 
-      - name: Build Go backend
-        run: |
-          cd backend/go-service
-          mkdir -p bin
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            go build -o bin/pdfsvc.exe ./cmd/pdfsvc
-          else
-            go build -o bin/pdfsvc ./cmd/pdfsvc
-          fi
-        shell: bash
-
-      - name: Stage backend for bundling
-        run: |
-          mkdir -p apps/desktop/src-tauri/resources/bin
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp backend/go-service/bin/pdfsvc.exe apps/desktop/src-tauri/resources/bin/
-          else
-            cp backend/go-service/bin/pdfsvc apps/desktop/src-tauri/resources/bin/
-          fi
-        shell: bash
-
-      - name: Install dependencies
-        run: |
-          cd apps/desktop
-          npm install
-
-      - name: Build app bundle
-        run: |
-          cd apps/desktop
-          npm run tauri:build
-
-      - name: Upload bundle artifact
-        uses: actions/upload-artifact@v4
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: pdftool-${{ matrix.target.name }}-bundle
-          path: apps/desktop/src-tauri/target/release/bundle/**
-
-  publish:
-    name: publish-release
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/**/*
-          generate_release_notes: true
-
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "PDFTool ${{ github.ref_name }}"
+          releaseBody: "Download the installer for your platform below. Note: You must have qpdf and ghostscript installed on your system to use the application."
+          releaseDraft: false
+          prerelease: false

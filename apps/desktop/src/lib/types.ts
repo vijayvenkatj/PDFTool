@@ -1,4 +1,4 @@
-export type CompressionPreset = "low" | "medium" | "high" | "aggressive";
+export type CompressionPreset = "none" | "low" | "medium" | "high" | "aggressive";
 
 export interface InputFile {
   path: string;

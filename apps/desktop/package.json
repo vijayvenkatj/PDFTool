@@ -7,11 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "backend:build": "cd ../../backend/go-service && make build",
-    "backend:build:release": "cd ../../backend/go-service && make build",
-    "pretauri:dev": "npm run backend:build",
     "tauri:dev": "tauri dev",
-    "pretauri:build": "npm run backend:build:release",
     "tauri:build": "tauri build"
   },
   "dependencies": {

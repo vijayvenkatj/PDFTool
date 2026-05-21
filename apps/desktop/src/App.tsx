@@ -1,5 +1,5 @@
 import { DragEvent, useEffect, useMemo, useState } from "react";
-import { cancelJob, createJob, getHealth, inspectFiles, startBackend, subscribeEvents } from "./lib/api";
+import { cancelJob, createJob, getHealth, inspectFiles, subscribeEvents } from "./lib/api";
 import { BackendHealth, CompressionPreset, InputFile, JobEvent } from "./lib/types";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -50,10 +50,9 @@ function formatToolIssue(tool: { ok: boolean; path: string; error?: string }, la
 
 export function App() {
   const [files, setFiles] = useState<InputFile[]>([]);
-  const [preset, setPreset] = useState<CompressionPreset>("medium");
+  const [preset, setPreset] = useState<CompressionPreset>("none");
   const [outputPath, setOutputPath] = useState("");
   const [maxFiles, setMaxFiles] = useState(DEFAULT_MAX_FILES);
-  const [maxWorkers, setMaxWorkers] = useState(4);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [lastEvent, setLastEvent] = useState<JobEvent | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -63,6 +62,7 @@ export function App() {
   const [isDropActive, setIsDropActive] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [runtimeState, setRuntimeState] = useState<"checking" | "ok" | "degraded">("checking");
+  const [showHelp, setShowHelp] = useState(false);
   const canStart = files.length > 0 && outputPath.length > 0 && !activeJobId && health?.status === "ok" && !isInspecting;
   const runDisabledReason =
     files.length === 0
@@ -110,13 +110,10 @@ export function App() {
   };
 
   useEffect(() => {
-    startBackend()
-      .then(async () => {
-        setStartupError(null);
-        setRuntimeState("checking");
-        let got = false;
-        for (let i = 0; i < 8; i++) {
-          try {
+    setStartupError(null);
+    setRuntimeState("checking");
+    const checkHealth = async () => {
+        try {
             const h = await getHealth();
             setHealth(h);
             setRuntimeState(h.status === "ok" ? "ok" : "degraded");
@@ -127,22 +124,14 @@ export function App() {
               ].join(" | ");
               setLogs((x) => [`runtime health degraded: ${detail}`, ...x].slice(0, 200));
             }
-            got = true;
-            break;
-          } catch {
-            await new Promise((r) => setTimeout(r, 250));
-          }
+        } catch (err) {
+            setRuntimeState("degraded");
+            setLogs((x) => [`health check error: ${String(err)}`, ...x].slice(0, 200));
         }
-        if (!got) {
-          setRuntimeState("degraded");
-          setLogs((x) => ["health check error: backend not ready", ...x].slice(0, 200));
-        }
-      })
-      .catch((err) => {
-        const msg = `backend start error: ${String(err)}`;
-        setStartupError(msg);
-        setLogs((x) => [msg, ...x]);
-      });
+    };
+    
+    checkHealth();
+
     const unsub = subscribeEvents((evt) => {
       setLastEvent(evt);
       setLogs((x) => [`${evt.stage}: ${evt.message}`, ...x].slice(0, 200));
@@ -221,10 +210,51 @@ export function App() {
 
   return (
     <div className="app">
+      {showHelp && (
+        <div className="modalOverlay" onClick={() => setShowHelp(false)}>
+          <div className="modalContent" onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader">
+              <h2>How to use PDF Tool</h2>
+              <button className="btnClose" onClick={() => setShowHelp(false)}>×</button>
+            </div>
+            <div className="modalBody">
+              <ol>
+                <li>
+                  <strong>Install Dependencies:</strong> Ensure <code>qpdf</code> and <code>ghostscript</code> are installed on your system.
+                  <ul>
+                    <li>macOS: <code>brew install qpdf ghostscript</code></li>
+                    <li>Windows: <code>choco install qpdf ghostscript</code></li>
+                  </ul>
+                </li>
+                <li>
+                  <strong>Add Files:</strong> Drag and drop PDF files into the "Input" section or use the "Choose PDF files" button.
+                </li>
+                <li>
+                  <strong>Reorder:</strong> Drag and drop files in the "Files" list to change the merge order.
+                </li>
+                <li>
+                  <strong>Select Preset:</strong> Choose a compression level. "Merge only" will simply combine files without reducing size.
+                </li>
+                <li>
+                  <strong>Set Output:</strong> Choose where to save the resulting PDF using the "Browse" button.
+                </li>
+                <li>
+                  <strong>Run:</strong> Click "Start" to begin the process. You can monitor progress in the logs.
+                </li>
+              </ol>
+              <p className="note">Note: This tool works entirely offline. Your files never leave your computer.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className="appHeader">
-        <div>
-          <h1>PDF Tool</h1>
-          <p className="subtitle">Compress and merge PDFs offline.</p>
+        <div className="headerLeft">
+          <div>
+            <h1>PDF Tool</h1>
+            <p className="subtitle">Compress and merge PDFs offline.</p>
+          </div>
+          <button className="btnInfo" onClick={() => setShowHelp(true)} title="How to use">i</button>
         </div>
         <div className="headerStatus">
           <div className="statusRow">
@@ -264,22 +294,15 @@ export function App() {
               value={maxFiles}
               onChange={(e) => setMaxFiles(Math.max(1, Math.min(MAX_FILES_LIMIT, Number(e.target.value || DEFAULT_MAX_FILES))))}
             />
-            <label>Workers</label>
-            <input
-              type="number"
-              min={1}
-              max={MAX_WORKERS_LIMIT}
-              value={maxWorkers}
-              onChange={(e) => setMaxWorkers(Math.max(1, Math.min(MAX_WORKERS_LIMIT, Number(e.target.value || 4))))}
-            />
           </div>
           <div className="row">
             <label>Preset</label>
             <select value={preset} onChange={(e) => setPreset(e.target.value as CompressionPreset)}>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="aggressive">Aggressive</option>
+              <option value="none">Fast Merge & Optimize (No image reduction)</option>
+              <option value="low">Low Compression (High Quality)</option>
+              <option value="medium">Medium Compression</option>
+              <option value="high">High Compression</option>
+              <option value="aggressive">Aggressive Compression</option>
             </select>
           </div>
           <div className="row">
@@ -341,7 +364,7 @@ export function App() {
               className="btnPrimary"
               disabled={!canStart}
               onClick={async () => {
-                const res = await createJob({ files, preset, outputPath, maxWorkers });
+                const res = await createJob({ files, preset, outputPath, maxWorkers: 1 });
                 setActiveJobId(res.jobId);
               }}
             >

@@ -1,31 +1,33 @@
 # Windows Packaging Notes
 
-## Backend binary
-
-Build Go sidecar for Windows:
-
-```bash
-cd backend/go-service
-GOOS=windows GOARCH=amd64 go build -o bin/pdfsvc.exe ./cmd/pdfsvc
-```
-
 ## Runtime dependencies
 
-- `qpdf.exe`
-- `gswin64c.exe` (Ghostscript CLI)
+The following tools must be bundled as sidecars in `apps/desktop/src-tauri/binaries/`:
 
-Set paths via environment in production launch if not bundled in PATH:
-
-- `PDFTOOL_QPDF_PATH`
-- `PDFTOOL_GS_PATH`
+- `qpdf-x86_64-pc-windows-msvc.exe` (from qpdf)
+- `ghostscript-x86_64-pc-windows-msvc.exe` (renamed from `gswin64c.exe`)
 
 ## Tauri bundle
 
-Place sidecar under app resources:
+Ensure `tauri.conf.json` has the correct sidecar configuration:
 
-- `src-tauri` bundle resources already include `../../backend/go-service/bin/*`
+```json
+"bundle": {
+  "active": true,
+  "targets": "all",
+  "icon": [
+    "icons/icon.ico",
+    "icons/icon.png"
+  ],
+  "externalBin": [
+    "binaries/qpdf",
+    "binaries/ghostscript"
+  ]
+}
+```
 
 ## Installer
 
 - Use `npm run tauri:build` in `apps/desktop`
 - This will produce NSIS/MSI targets depending on Tauri target config.
+- The build process will automatically bundle the sidecars from the `binaries/` directory.

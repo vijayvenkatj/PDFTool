@@ -2,69 +2,94 @@
 
 mod backend;
 
-use backend::launcher::BackendLauncher;
-use std::process::Child;
-use std::sync::Mutex;
-use tauri::{Manager, State};
-
-const BACKEND_PORT: u16 = 47832;
+use backend::pdf_pipeline::{self, PipelineState, CreateJobRequest, InspectedFile};
+use std::sync::Arc;
+use tauri::State;
 
 struct AppState {
-    child: Mutex<Option<Child>>,
-    launcher: BackendLauncher,
-}
-
-impl AppState {
-    fn new() -> Self {
-        Self {
-            child: Mutex::new(None),
-            launcher: BackendLauncher::new(BACKEND_PORT),
-        }
-    }
+    pipeline: Arc<PipelineState>,
 }
 
 #[tauri::command]
-fn start_backend(app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
-    let mut child = state
-        .child
-        .lock()
-        .map_err(|_| "backend lock poisoned".to_string())?;
-    state.launcher.start(&app, &mut child)
+async fn create_job(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    req: CreateJobRequest,
+) -> Result<String, String> {
+    Ok(pdf_pipeline::run_job(app, state.pipeline.clone(), req).await)
 }
 
 #[tauri::command]
-fn stop_backend(state: State<AppState>) -> Result<(), String> {
-    let mut child = state
-        .child
-        .lock()
-        .map_err(|_| "backend lock poisoned".to_string())?;
-    state.launcher.stop(&mut child);
+fn cancel_job(state: State<'_, AppState>, job_id: String) -> Result< (), String> {
+    state.pipeline.cancel_job(&job_id);
     Ok(())
 }
 
 #[tauri::command]
-fn backend_status(state: State<AppState>) -> Result<String, String> {
-    let child = state
-        .child
-        .lock()
-        .map_err(|_| "backend lock poisoned".to_string())?;
-    Ok(state.launcher.status(&child))
+fn inspect_files(paths: Vec<String>) -> Result<Vec<InspectedFile>, String> {
+    Ok(pdf_pipeline::inspect_files(paths))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolStatus {
+    ok: bool,
+    path: String,
+    version: String,
+    error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HealthStatus {
+    status: String,
+    qpdf: ToolStatus,
+    ghostscript: ToolStatus,
+}
+
+#[tauri::command]
+async fn get_health() -> Result<HealthStatus, String> {
+    let qpdf_bin = pdf_pipeline::get_tool_path("qpdf");
+    let (qpdf_ok, qpdf_err) = match std::process::Command::new(&qpdf_bin).arg("--version").output() {
+        Ok(out) => (out.status.success(), if out.status.success() { None } else { Some(String::from_utf8_lossy(&out.stderr).to_string()) }),
+        Err(e) => (false, Some(e.to_string())),
+    };
+        
+    let gs_name = if cfg!(windows) { "gswin64c" } else { "gs" };
+    let gs_bin = pdf_pipeline::get_tool_path(gs_name);
+    let (gs_ok, gs_err) = match std::process::Command::new(&gs_bin).arg("--version").output() {
+        Ok(out) => (out.status.success(), if out.status.success() { None } else { Some(String::from_utf8_lossy(&out.stderr).to_string()) }),
+        Err(e) => (false, Some(e.to_string())),
+    };
+    
+    Ok(HealthStatus {
+        status: if qpdf_ok && gs_ok { "ok".to_string() } else { "degraded".to_string() },
+        qpdf: ToolStatus {
+            ok: qpdf_ok,
+            path: qpdf_bin,
+            version: "system".to_string(),
+            error: qpdf_err,
+        },
+        ghostscript: ToolStatus {
+            ok: gs_ok,
+            path: gs_bin,
+            version: "system".to_string(),
+            error: gs_err,
+        },
+    })
 }
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState::new())
-        .setup(|app| {
-            let state: State<AppState> = app.state();
-            let _ = start_backend(app.app_handle().clone(), state);
-            Ok(())
+        .manage(AppState {
+            pipeline: Arc::new(PipelineState::new()),
         })
         .invoke_handler(tauri::generate_handler![
-            start_backend,
-            stop_backend,
-            backend_status
+            create_job,
+            cancel_job,
+            inspect_files,
+            get_health
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
