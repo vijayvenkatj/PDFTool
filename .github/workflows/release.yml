@@ -1,0 +1,92 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build-${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: windows
+            os: windows-latest
+          - name: macos
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go-service/go.mod
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install PDF tools (Windows)
+        if: matrix.target.name == 'windows'
+        run: choco install qpdf ghostscript -y --no-progress
+
+      - name: Resolve tool paths (Windows)
+        if: matrix.target.name == 'windows'
+        run: |
+          $qpdf = (Get-Command qpdf.exe -ErrorAction SilentlyContinue).Source
+          if (-not $qpdf) {
+            $candidate = "C:\Program Files\qpdf\bin\qpdf.exe"
+            if (Test-Path $candidate) { $qpdf = $candidate }
+          }
+          if (-not $qpdf) { throw "qpdf.exe not found" }
+          $gs = (Get-ChildItem "C:\Program Files\gs" -Recurse -Filter gswin64c.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $gs) { throw "gswin64c.exe not found" }
+          "PDFTOOL_QPDF_PATH=$qpdf" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PDFTOOL_GS_PATH=$gs" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install PDF tools (macOS)
+        if: matrix.target.name == 'macos'
+        run: brew install qpdf ghostscript
+
+      - name: Install dependencies
+        run: |
+          cd apps/desktop
+          npm install
+
+      - name: Build app bundle
+        run: |
+          cd apps/desktop
+          npm run tauri:build
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdftool-${{ matrix.target.name }}-bundle
+          path: apps/desktop/src-tauri/target/release/bundle/**
+
+  publish:
+    name: publish-release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true

@@ -121,6 +121,13 @@ body {
   gap: 6px;
   color: #475569;
   background: #f8fafc;
+  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+
+.dropzone.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  transform: translateY(-1px);
 }
 
 .row {
@@ -156,6 +163,7 @@ input {
 
 button {
   cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 button:disabled {
@@ -169,8 +177,17 @@ button:disabled {
   border-color: #2563eb;
 }
 
+.btnPrimary:not(:disabled):hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
 .btnGhost {
   background: #f8fafc;
+}
+
+.btnGhost:not(:disabled):hover {
+  background: #f1f5f9;
 }
 
 .muted {
@@ -206,6 +223,11 @@ button:focus {
   padding: 10px 12px;
   background: #f9fafb;
   cursor: grab;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.fileList li:hover {
+  border-color: #c7d2e4;
 }
 
 .fileMeta {
@@ -254,6 +276,13 @@ button:focus {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.progressRow span {
+  min-width: 42px;
+  text-align: right;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
 }
 
 progress {

@@ -5,6 +5,8 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const DEFAULT_MAX_FILES = 100;
+const MAX_FILES_LIMIT = 100;
+const MAX_WORKERS_LIMIT = 8;
 
 function readDroppedFiles(event: DragEvent<HTMLDivElement>): InputFile[] {
   const files = Array.from(event.dataTransfer.files);
@@ -52,9 +54,22 @@ export function App() {
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [health, setHealth] = useState<BackendHealth | null>(null);
   const [isInspecting, setIsInspecting] = useState(false);
+  const [isDropActive, setIsDropActive] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [runtimeState, setRuntimeState] = useState<"checking" | "ok" | "degraded">("checking");
   const canStart = files.length > 0 && outputPath.length > 0 && !activeJobId && health?.status === "ok" && !isInspecting;
+  const runDisabledReason =
+    files.length === 0
+      ? "Add at least one PDF file."
+      : !outputPath
+        ? "Choose an output location."
+        : health?.status !== "ok"
+          ? "Runtime tools are not ready."
+          : isInspecting
+            ? "Please wait for file inspection."
+            : activeJobId
+              ? "A job is already running."
+              : "";
 
   const addFiles = async (incoming: InputFile[]) => {
     const candidatePaths = incoming
@@ -79,7 +94,7 @@ export function App() {
       setFiles((current) => {
         const seen = new Set(current.map((f) => f.path));
         const unique = good.filter((f) => !seen.has(f.path));
-        return [...current, ...unique].slice(0, maxFiles);
+        return [...current, ...unique].slice(0, Math.min(maxFiles, MAX_FILES_LIMIT));
       });
     } catch (err) {
       setLogs((x) => [`file inspect failed: ${String(err)}`, ...x].slice(0, 200));
@@ -167,6 +182,7 @@ export function App() {
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+    setIsDropActive(false);
     const dropped = readDroppedFiles(event);
     void addFiles(dropped);
   };
@@ -190,6 +206,8 @@ export function App() {
   };
 
   const totalBytes = useMemo(() => files.reduce((sum, f) => sum + f.sizeBytes, 0), [files]);
+  const progressValue = Math.max(0, Math.min(1, lastEvent?.progress ?? 0));
+  const progressLabel = `${Math.round(progressValue * 100)}%`;
 
   return (
     <div className="app">
@@ -216,8 +234,12 @@ export function App() {
             <button className="btnGhost" onClick={selectFiles}>Choose PDF files</button>
           </div>
           <div
-            className="dropzone"
-            onDragOver={(e) => e.preventDefault()}
+            className={`dropzone ${isDropActive ? "active" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (!isDropActive) setIsDropActive(true);
+            }}
+            onDragLeave={() => setIsDropActive(false)}
             onDrop={onDrop}
           >
             <strong>Drop PDFs here</strong>
@@ -225,9 +247,21 @@ export function App() {
           </div>
           <div className="row">
             <label>Max files</label>
-            <input type="number" min={1} max={500} value={maxFiles} onChange={(e) => setMaxFiles(Number(e.target.value || DEFAULT_MAX_FILES))} />
+            <input
+              type="number"
+              min={1}
+              max={MAX_FILES_LIMIT}
+              value={maxFiles}
+              onChange={(e) => setMaxFiles(Math.max(1, Math.min(MAX_FILES_LIMIT, Number(e.target.value || DEFAULT_MAX_FILES))))}
+            />
             <label>Workers</label>
-            <input type="number" min={1} max={8} value={maxWorkers} onChange={(e) => setMaxWorkers(Number(e.target.value || 4))} />
+            <input
+              type="number"
+              min={1}
+              max={MAX_WORKERS_LIMIT}
+              value={maxWorkers}
+              onChange={(e) => setMaxWorkers(Math.max(1, Math.min(MAX_WORKERS_LIMIT, Number(e.target.value || 4))))}
+            />
           </div>
           <div className="row">
             <label>Preset</label>
@@ -281,7 +315,7 @@ export function App() {
                     <span className="fileName">{f.name}</span>
                     <span className="fileSize">{formatBytes(f.sizeBytes)}</span>
                   </div>
-                  <button className="btnGhost" onClick={() => setFiles((arr) => arr.filter((_, idx) => idx !== i))}>Remove</button>
+                  <button className="btnGhost" disabled={!!activeJobId} onClick={() => setFiles((arr) => arr.filter((_, idx) => idx !== i))}>Remove</button>
                 </li>
               ))}
             </ol>
@@ -301,7 +335,7 @@ export function App() {
                 setActiveJobId(res.jobId);
               }}
             >
-              Start
+              {activeJobId ? "Running..." : "Start"}
             </button>
             <button
               className="btnGhost"
@@ -317,13 +351,14 @@ export function App() {
           </div>
           {startupError ? <p className="warning">{startupError}</p> : null}
           {isInspecting ? <p className="muted">Inspecting selected files...</p> : null}
+          {!canStart && !startupError ? <p className="muted">{runDisabledReason}</p> : null}
           <div className="statusGrid">
             <div><span className="label">Status</span> {lastEvent?.status ?? "idle"}</div>
             <div><span className="label">Stage</span> {lastEvent?.stage ?? "-"}</div>
           </div>
           <div className="progressRow">
-            <progress value={lastEvent?.progress ?? 0} max={1} />
-            <span>{Math.round((lastEvent?.progress ?? 0) * 100)}%</span>
+            <progress value={progressValue} max={1} />
+            <span>{progressLabel}</span>
           </div>
           <div className="logBox">
             {logs.map((line, idx) => <div key={idx}>{line}</div>)}
