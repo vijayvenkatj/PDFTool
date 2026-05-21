@@ -1,3 +1,4 @@
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -109,10 +110,10 @@ impl BackendLauncher {
         }
         let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
         #[cfg(target_os = "windows")]
-        let path = resource_dir.join("bin").join("pdfsvc.exe");
+        let bundled_names = ["pdfsvc.exe", "pdfsvc"];
         #[cfg(not(target_os = "windows"))]
-        let path = resource_dir.join("bin").join("pdfsvc");
-        if path.exists() {
+        let bundled_names = ["pdfsvc"];
+        if let Some(path) = self.find_resource_binary(&resource_dir, &bundled_names) {
             return Ok(path);
         }
 
@@ -141,6 +142,44 @@ impl BackendLauncher {
         Err("backend binary not found; set PDFTOOL_BACKEND_PATH or build backend/go-service/bin/pdfsvc".to_string())
     }
 
+    fn find_resource_binary(&self, resource_dir: &Path, names: &[&str]) -> Option<PathBuf> {
+        for name in names {
+            let direct = resource_dir.join(name);
+            if direct.exists() {
+                return Some(direct);
+            }
+            let in_bin = resource_dir.join("bin").join(name);
+            if in_bin.exists() {
+                return Some(in_bin);
+            }
+        }
+        self.find_in_tree(resource_dir, names, 8)
+    }
+
+    fn find_in_tree(&self, root: &Path, names: &[&str], max_depth: usize) -> Option<PathBuf> {
+        if max_depth == 0 {
+            return None;
+        }
+        let entries = fs::read_dir(root).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if names.iter().any(|candidate| candidate.eq_ignore_ascii_case(file_name)) {
+                        return Some(path);
+                    }
+                }
+                continue;
+            }
+            if path.is_dir() {
+                if let Some(found) = self.find_in_tree(&path, names, max_depth - 1) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
     fn resolve_tool_binary(
         &self,
         app: &tauri::AppHandle,
@@ -155,11 +194,8 @@ impl BackendLauncher {
             }
         }
         if let Ok(resource_dir) = app.path().resource_dir() {
-            for bundled in bundled_names {
-                let p = resource_dir.join("bin").join(bundled);
-                if p.exists() {
-                    return Some(p.to_string_lossy().to_string());
-                }
+            if let Some(p) = self.find_resource_binary(&resource_dir, bundled_names) {
+                return Some(p.to_string_lossy().to_string());
             }
         }
         for candidate in candidates {
@@ -167,6 +203,21 @@ impl BackendLauncher {
                 return Some((*candidate).to_string());
             }
         }
+        #[cfg(target_os = "windows")]
+        if let Ok(output) = Command::new("where").arg(fallback_name).output() {
+            if output.status.success() {
+                let resolved = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if !resolved.is_empty() {
+                    return Some(resolved);
+                }
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
         if let Ok(output) = Command::new("which").arg(fallback_name).output() {
             if output.status.success() {
                 let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
