@@ -2,6 +2,10 @@
 
 Production-oriented desktop PDF compressor + merger.
 
+## Getting Started
+
+Follow the [Installation Guide](installation.md) to set up the required dependencies and install PDFTool on your system.
+
 ## Stack
 
 - Desktop shell: Tauri (Rust backend)
