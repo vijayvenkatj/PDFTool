@@ -58,6 +58,16 @@ jobs:
         if: matrix.target.name == 'macos'
         run: brew install qpdf ghostscript
 
+      - name: Build Go backend
+        run: |
+          cd backend/go-service
+          mkdir -p bin
+          if [ "${{ matrix.target.name }}" = "windows" ]; then
+            go build -o bin/pdfsvc.exe ./cmd/pdfsvc
+          else
+            go build -o bin/pdfsvc ./cmd/pdfsvc
+          fi
+
       - name: Install dependencies
         run: |
           cd apps/desktop

@@ -44,6 +44,12 @@ jobs:
           "PDFTOOL_QPDF_PATH=$qpdf" | Out-File -FilePath $env:GITHUB_ENV -Append
           "PDFTOOL_GS_PATH=$gs" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Build Go backend
+        run: |
+          cd backend/go-service
+          mkdir -p bin
+          go build -o bin/pdfsvc.exe ./cmd/pdfsvc
+
       - name: Install deps
         run: |
           cd apps/desktop
