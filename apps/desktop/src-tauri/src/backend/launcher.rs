@@ -49,7 +49,9 @@ impl BackendLauncher {
             ));
         }
 
-        let mut cmd = Command::new(backend_path);
+        eprintln!("[launcher] backend binary: {}", backend_path.display());
+
+        let mut cmd = Command::new(&backend_path);
         cmd.arg("--port")
             .arg(self.port.to_string())
             .stdin(Stdio::null());
@@ -74,12 +76,18 @@ impl BackendLauncher {
         cmd.stderr(Stdio::from(log_file_err));
 
         if let Some(qpdf_path) = self.resolve_qpdf_binary(app) {
+            eprintln!("[launcher] resolved qpdf: {}", qpdf_path);
             cmd.env("PDFTOOL_QPDF_PATH", qpdf_path.clone());
-            cmd.arg("--qpdf").arg(qpdf_path);
+            cmd.arg("--qpdf").arg(&qpdf_path);
+        } else {
+            eprintln!("[launcher] qpdf NOT RESOLVED - health check will fail");
         }
         if let Some(gs_path) = self.resolve_ghostscript_binary(app) {
+            eprintln!("[launcher] resolved gs: {}", gs_path);
             cmd.env("PDFTOOL_GS_PATH", gs_path.clone());
-            cmd.arg("--gs").arg(gs_path);
+            cmd.arg("--gs").arg(&gs_path);
+        } else {
+            eprintln!("[launcher] gs NOT RESOLVED - health check will fail");
         }
 
         let mut spawned = cmd
@@ -87,9 +95,11 @@ impl BackendLauncher {
             .map_err(|e| format!("failed to launch backend: {e}"))?;
         std::thread::sleep(Duration::from_millis(220));
         if let Ok(Some(status)) = spawned.try_wait() {
+            let log_content = std::fs::read_to_string(&log_path).unwrap_or_default();
             return Err(format!(
-                "backend exited immediately with status {status}. Check log: {}",
-                log_path.display()
+                "backend exited immediately with status {status}. Check log: {}\n\nLog:\n{}",
+                log_path.display(),
+                log_content
             ));
         }
         *child = Some(spawned);
@@ -117,41 +127,39 @@ impl BackendLauncher {
                 return Ok(PathBuf::from(clean));
             }
         }
+
         let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
         #[cfg(target_os = "windows")]
-        let bundled_names = ["pdfsvc.exe", "pdfsvc"];
+        let bundled_names = ["pdfsvc.exe"];
         #[cfg(not(target_os = "windows"))]
         let bundled_names = ["pdfsvc"];
-        if let Some(path) = self.find_resource_binary(&resource_dir, &bundled_names) {
+
+        if let Some(path) = self.find_resource_binary_exact(&resource_dir, &bundled_names) {
             return Ok(path);
         }
 
-        let mut candidates = Vec::new();
-        #[cfg(target_os = "windows")]
-        {
-            candidates.push(PathBuf::from(
-                "..\\..\\backend\\go-service\\bin\\pdfsvc.exe",
-            ));
-            candidates.push(PathBuf::from(
-                "..\\..\\..\\backend\\go-service\\bin\\pdfsvc.exe",
-            ));
-        }
         #[cfg(not(target_os = "windows"))]
         {
             let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            candidates.push(manifest_dir.join("../../../backend/go-service/bin/pdfsvc"));
-            candidates.push(PathBuf::from("../../backend/go-service/bin/pdfsvc"));
-            candidates.push(PathBuf::from("../../../backend/go-service/bin/pdfsvc"));
-        }
-        for p in candidates {
-            if p.exists() {
-                return Ok(p);
+            let dev_candidates = [
+                manifest_dir.join("../../../backend/go-service/bin/pdfsvc"),
+                PathBuf::from("../../backend/go-service/bin/pdfsvc"),
+                PathBuf::from("../../../backend/go-service/bin/pdfsvc"),
+            ];
+            for p in dev_candidates {
+                if p.exists() {
+                    return Ok(p);
+                }
             }
         }
-        Err("backend binary not found; set PDFTOOL_BACKEND_PATH or build backend/go-service/bin/pdfsvc".to_string())
+
+        Err(format!(
+            "backend binary not found in resources ({}) or dev paths. Set PDFTOOL_BACKEND_PATH to override.",
+            resource_dir.display()
+        ))
     }
 
-    fn find_resource_binary(&self, resource_dir: &Path, names: &[&str]) -> Option<PathBuf> {
+    fn find_resource_binary_exact(&self, resource_dir: &Path, names: &[&str]) -> Option<PathBuf> {
         for name in names {
             let direct = resource_dir.join(name);
             if direct.exists() {
@@ -162,10 +170,15 @@ impl BackendLauncher {
                 return Some(in_bin);
             }
         }
-        self.find_in_tree(resource_dir, names, 8)
+        for name in names {
+            if let Some(found) = self.find_in_tree_limited(resource_dir, name, 6) {
+                return Some(found);
+            }
+        }
+        None
     }
 
-    fn find_in_tree(&self, root: &Path, names: &[&str], max_depth: usize) -> Option<PathBuf> {
+    fn find_in_tree_limited(&self, root: &Path, name: &str, max_depth: usize) -> Option<PathBuf> {
         if max_depth == 0 {
             return None;
         }
@@ -174,14 +187,14 @@ impl BackendLauncher {
             let path = entry.path();
             if path.is_file() {
                 if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if names.iter().any(|candidate| candidate.eq_ignore_ascii_case(file_name)) {
+                    if file_name.eq_ignore_ascii_case(name) {
                         return Some(path);
                     }
                 }
                 continue;
             }
             if path.is_dir() {
-                if let Some(found) = self.find_in_tree(&path, names, max_depth - 1) {
+                if let Some(found) = self.find_in_tree_limited(&path, name, max_depth - 1) {
                     return Some(found);
                 }
             }
@@ -194,53 +207,61 @@ impl BackendLauncher {
         app: &tauri::AppHandle,
         var_name: &str,
         fallback_name: &str,
-        candidates: &[&str],
         bundled_names: &[&str],
     ) -> Option<String> {
         if let Ok(v) = std::env::var(var_name) {
             if let Some(clean) = self.sanitize_path_string(&v) {
+                eprintln!("[{}] found in env: {}", var_name, clean);
                 return Some(clean);
             }
         }
         if let Ok(resource_dir) = app.path().resource_dir() {
-            if let Some(p) = self.find_resource_binary(&resource_dir, bundled_names) {
-                return self.sanitize_path_string(&p.to_string_lossy());
+            eprintln!("[{}] searching bundled at: {}", var_name, resource_dir.display());
+            if let Some(p) = self.find_resource_binary_exact(&resource_dir, bundled_names) {
+                let path_str = p.to_string_lossy().to_string();
+                eprintln!("[{}] found bundled: {}", var_name, path_str);
+                return self.sanitize_path_string(&path_str);
             }
-        }
-        for candidate in candidates {
-            if Path::new(candidate).exists() {
-                if let Some(clean) = self.sanitize_path_string(candidate) {
-                    return Some(clean);
-                }
-            }
+            eprintln!("[{}] not found in bundled resources", var_name);
         }
         #[cfg(target_os = "windows")]
-        let mut where_cmd = Command::new("where");
-        #[cfg(target_os = "windows")]
-        where_cmd.creation_flags(CREATE_NO_WINDOW);
-        #[cfg(target_os = "windows")]
-        if let Ok(output) = where_cmd.arg(fallback_name).output() {
-            if output.status.success() {
-                let resolved = String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
-                if let Some(clean) = self.sanitize_path_string(&resolved) {
-                    return Some(clean);
+        {
+            eprintln!("[{}] searching PATH using where {}", var_name, fallback_name);
+            let mut where_cmd = Command::new("where");
+            where_cmd.creation_flags(CREATE_NO_WINDOW);
+            if let Ok(output) = where_cmd.arg(fallback_name).output() {
+                if output.status.success() {
+                    let resolved = String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+                    eprintln!("[{}] where returned: {}", var_name, resolved);
+                    if let Some(clean) = self.sanitize_path_string(&resolved) {
+                        eprintln!("[{}] cleaned to: {}", var_name, clean);
+                        return Some(clean);
+                    }
+                } else {
+                    eprintln!("[{}] where failed: {}", var_name, String::from_utf8_lossy(&output.stderr));
                 }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        if let Ok(output) = Command::new("which").arg(fallback_name).output() {
-            if output.status.success() {
-                let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if let Some(clean) = self.sanitize_path_string(&resolved) {
-                    return Some(clean);
+        {
+            eprintln!("[{}] searching PATH using which {}", var_name, fallback_name);
+            if let Ok(output) = Command::new("which").arg(fallback_name).output() {
+                if output.status.success() {
+                    let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    eprintln!("[{}] which returned: {}", var_name, resolved);
+                    if let Some(clean) = self.sanitize_path_string(&resolved) {
+                        eprintln!("[{}] cleaned to: {}", var_name, clean);
+                        return Some(clean);
+                    }
                 }
             }
         }
+        eprintln!("[{}] NOT FOUND", var_name);
         None
     }
 
@@ -272,7 +293,6 @@ impl BackendLauncher {
                 app,
                 "PDFTOOL_QPDF_PATH",
                 "qpdf",
-                &["C:\\Program Files\\qpdf\\bin\\qpdf.exe"],
                 &["qpdf.exe", "qpdf"],
             )
         }
@@ -282,7 +302,6 @@ impl BackendLauncher {
                 app,
                 "PDFTOOL_QPDF_PATH",
                 "qpdf",
-                &["/opt/homebrew/bin/qpdf", "/usr/local/bin/qpdf"],
                 &["qpdf"],
             )
         }
@@ -295,7 +314,6 @@ impl BackendLauncher {
                 app,
                 "PDFTOOL_GS_PATH",
                 "gswin64c",
-                &[],
                 &["gswin64c.exe", "gs.exe", "gswin64c"],
             )
         }
@@ -305,7 +323,6 @@ impl BackendLauncher {
                 app,
                 "PDFTOOL_GS_PATH",
                 "gs",
-                &["/opt/homebrew/bin/gs", "/usr/local/bin/gs"],
                 &["gs"],
             )
         }

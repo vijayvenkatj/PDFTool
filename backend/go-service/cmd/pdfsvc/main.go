@@ -21,6 +21,9 @@ func main() {
 	*qpdfPath = normalizePathArg(*qpdfPath)
 	*gsPath = normalizePathArg(*gsPath)
 
+	log.Printf("[backend] qpdf path: %s", *qpdfPath)
+	log.Printf("[backend] ghostscript path: %s", *gsPath)
+
 	broker := progress.NewBroker()
 	tools := pipeline.ToolPaths{
 		QPDF:        *qpdfPath,
