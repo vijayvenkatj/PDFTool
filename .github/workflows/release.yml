@@ -62,11 +62,12 @@ jobs:
         run: |
           cd backend/go-service
           mkdir -p bin
-          if [ "${{ matrix.target.name }}" = "windows" ]; then
+          if [ "${{ runner.os }}" = "Windows" ]; then
             go build -o bin/pdfsvc.exe ./cmd/pdfsvc
           else
             go build -o bin/pdfsvc ./cmd/pdfsvc
           fi
+        shell: bash
 
       - name: Install dependencies
         run: |

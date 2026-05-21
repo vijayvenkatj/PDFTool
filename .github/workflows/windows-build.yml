@@ -47,7 +47,7 @@ jobs:
       - name: Build Go backend
         run: |
           cd backend/go-service
-          mkdir -p bin
+          if (-not (Test-Path bin)) { mkdir bin }
           go build -o bin/pdfsvc.exe ./cmd/pdfsvc
 
       - name: Install deps
