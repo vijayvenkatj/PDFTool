@@ -31,11 +31,6 @@
     ],
     "resources": [
       "./resources/bin/*"
-    ],
-    "windows": {
-      "wix": {
-        "license": null
-      }
-    }
+    ]
   }
 }
