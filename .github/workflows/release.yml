@@ -69,6 +69,16 @@ jobs:
           fi
         shell: bash
 
+      - name: Stage binaries for bundling
+        run: |
+          mkdir -p apps/desktop/src-tauri/resources/bin
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp backend/go-service/bin/pdfsvc.exe apps/desktop/src-tauri/resources/bin/
+          else
+            cp backend/go-service/bin/pdfsvc apps/desktop/src-tauri/resources/bin/
+          fi
+        shell: bash
+
       - name: Install dependencies
         run: |
           cd apps/desktop

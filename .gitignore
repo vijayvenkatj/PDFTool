@@ -3,5 +3,7 @@ dist
 *.log
 .DS_Store
 apps/desktop/src-tauri/target
+apps/desktop/src-tauri/resources/bin/*
+!apps/desktop/src-tauri/resources/bin/.gitkeep
 backend/go-service/bin
 backend/go-service/.tmp
