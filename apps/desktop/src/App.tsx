@@ -42,6 +42,12 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(precision)} ${units[idx]}`;
 }
 
+function formatToolIssue(tool: { ok: boolean; path: string; error?: string }, label: string): string {
+  if (tool.ok) return `${label}: ok`;
+  const reason = tool.error ? ` (${tool.error})` : "";
+  return `${label}: missing/unusable at ${tool.path}${reason}`;
+}
+
 export function App() {
   const [files, setFiles] = useState<InputFile[]>([]);
   const [preset, setPreset] = useState<CompressionPreset>("medium");
@@ -115,7 +121,11 @@ export function App() {
             setHealth(h);
             setRuntimeState(h.status === "ok" ? "ok" : "degraded");
             if (h.status !== "ok") {
-              setLogs((x) => ["runtime health degraded: qpdf/ghostscript not ready", ...x].slice(0, 200));
+              const detail = [
+                formatToolIssue(h.qpdf, "qpdf"),
+                formatToolIssue(h.ghostscript, "ghostscript")
+              ].join(" | ");
+              setLogs((x) => [`runtime health degraded: ${detail}`, ...x].slice(0, 200));
             }
             got = true;
             break;

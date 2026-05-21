@@ -125,7 +125,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := model.HealthResponse{
 		QPDF:        checkTool(s.tools.QPDF, "--version"),
-		Ghostscript: checkTool(s.tools.Ghostscript, "--version"),
+		Ghostscript: checkTool(s.tools.Ghostscript, "-version", "--version"),
 	}
 	if resp.QPDF.Ok && resp.Ghostscript.Ok {
 		resp.Status = "ok"
@@ -135,23 +135,33 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func checkTool(path string, versionArg string) model.ToolHealth {
-	cmd := exec.Command(path, versionArg)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
+func checkTool(path string, versionArgs ...string) model.ToolHealth {
+	var lastErr string
+	for _, arg := range versionArgs {
+		cmd := exec.Command(path, arg)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			text := strings.TrimSpace(string(output))
+			if text != "" {
+				lastErr = fmt.Sprintf("%v (%s)", err, text)
+			} else {
+				lastErr = err.Error()
+			}
+			continue
+		}
+		version := strings.TrimSpace(string(output))
+		if idx := strings.Index(version, "\n"); idx >= 0 {
+			version = version[:idx]
+		}
 		return model.ToolHealth{
-			Path:  path,
-			Ok:    false,
-			Error: err.Error(),
+			Path:    path,
+			Ok:      true,
+			Version: version,
 		}
 	}
-	version := strings.TrimSpace(string(output))
-	if idx := strings.Index(version, "\n"); idx >= 0 {
-		version = version[:idx]
-	}
 	return model.ToolHealth{
-		Path:    path,
-		Ok:      true,
-		Version: version,
+		Path:  path,
+		Ok:    false,
+		Error: lastErr,
 	}
 }

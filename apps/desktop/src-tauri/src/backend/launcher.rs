@@ -6,6 +6,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tauri::Manager;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub struct BackendLauncher {
     port: u16,
@@ -48,6 +53,8 @@ impl BackendLauncher {
         cmd.arg("--port")
             .arg(self.port.to_string())
             .stdin(Stdio::null());
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
 
         let log_path = std::env::temp_dir().join("pdftool-backend.log");
         let log_file = OpenOptions::new()
@@ -204,7 +211,11 @@ impl BackendLauncher {
             }
         }
         #[cfg(target_os = "windows")]
-        if let Ok(output) = Command::new("where").arg(fallback_name).output() {
+        let mut where_cmd = Command::new("where");
+        #[cfg(target_os = "windows")]
+        where_cmd.creation_flags(CREATE_NO_WINDOW);
+        #[cfg(target_os = "windows")]
+        if let Ok(output) = where_cmd.arg(fallback_name).output() {
             if output.status.success() {
                 let resolved = String::from_utf8_lossy(&output.stdout)
                     .lines()
