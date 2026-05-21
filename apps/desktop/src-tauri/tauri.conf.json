@@ -29,6 +29,20 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
+    "windows": [
+      {
+        "resources": [
+          "..\\..\\..\\backend\\go-service\\bin\\*"
+        ]
+      }
+    ],
+    "macOS": [
+      {
+        "resources": [
+          "../../../backend/go-service/bin/*"
+        ]
+      }
+    ],
     "resources": [
       "../../../backend/go-service/bin/*"
     ]
