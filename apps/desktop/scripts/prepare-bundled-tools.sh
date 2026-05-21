@@ -6,13 +6,14 @@ STAGE_DIR="$ROOT_DIR/src-tauri/resources/bin"
 
 mkdir -p "$STAGE_DIR"
 
-# On CI/CD (GitHub Actions), tools are already staged by workflows
-# This script is mainly for local development
-if [[ -n "${CI:-}" ]]; then
-  if [[ -f "$STAGE_DIR/qpdf" ]] || [[ -f "$STAGE_DIR/qpdf.exe" ]]; then
-    echo "Tools already staged for CI build"
+# On GitHub Actions, tools are already staged by PowerShell workflows
+if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+  if [[ -f "$STAGE_DIR/qpdf.exe" ]] || [[ -f "$STAGE_DIR/qpdf" ]]; then
+    echo "✓ Tools already staged by CI workflow"
     exit 0
   fi
+  echo "✗ Expected tools to be staged by workflow, but not found in $STAGE_DIR"
+  exit 1
 fi
 
 copy_tool() {
@@ -49,36 +50,39 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
   fi
   copy_tool "$QPDF_PATH" "$STAGE_DIR/qpdf"
   copy_tool "$GS_PATH" "$STAGE_DIR/gs"
-  echo "Bundled macOS tools: qpdf, gs"
+  echo "✓ Bundled macOS tools: qpdf, gs"
   exit 0
 fi
 
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
-  # On local Windows dev, require env vars; on CI they're already staged
+  # Local Windows dev build
   QPDF_PATH="${PDFTOOL_QPDF_PATH:-}"
   GS_PATH="${PDFTOOL_GS_PATH:-}"
-  if [[ -z "${QPDF_PATH}" || ! -f "${QPDF_PATH}" ]]; then
-    if [[ -n "${CI:-}" ]]; then
-      echo "CI environment: tools should be staged by workflow" >&2
-    else
-      echo "For local Windows dev, set PDFTOOL_QPDF_PATH=C:\\Program Files\\qpdf\\bin\\qpdf.exe" >&2
-    fi
+  if [[ -z "${QPDF_PATH}" ]]; then
+    echo "ERROR: For local Windows build, set PDFTOOL_QPDF_PATH" >&2
+    echo "Example: set PDFTOOL_QPDF_PATH=C:\\Program Files\\qpdf\\bin\\qpdf.exe" >&2
     exit 1
   fi
-  if [[ -z "${GS_PATH}" || ! -f "${GS_PATH}" ]]; then
-    if [[ -n "${CI:-}" ]]; then
-      echo "CI environment: tools should be staged by workflow" >&2
-    else
-      echo "For local Windows dev, set PDFTOOL_GS_PATH=C:\\Program Files\\gs\\gs...\\bin\\gswin64c.exe" >&2
-    fi
+  if [[ -z "${GS_PATH}" ]]; then
+    echo "ERROR: For local Windows build, set PDFTOOL_GS_PATH" >&2
+    echo "Example: set PDFTOOL_GS_PATH=C:\\Program Files\\gs\\gs9.56.1\\bin\\gswin64c.exe" >&2
+    exit 1
+  fi
+  if [[ ! -f "${QPDF_PATH}" ]]; then
+    echo "ERROR: qpdf not found at $QPDF_PATH" >&2
+    exit 1
+  fi
+  if [[ ! -f "${GS_PATH}" ]]; then
+    echo "ERROR: gswin64c.exe not found at $GS_PATH" >&2
     exit 1
   fi
   copy_tool "$QPDF_PATH" "$STAGE_DIR/qpdf.exe"
   copy_tool "$GS_PATH" "$STAGE_DIR/gswin64c.exe"
-  echo "Bundled Windows tools: qpdf.exe, gswin64c.exe"
+  echo "✓ Bundled Windows tools: qpdf.exe, gswin64c.exe"
   exit 0
 fi
 
 echo "Unsupported OSTYPE: $OSTYPE" >&2
 exit 1
+
 
