@@ -28,55 +28,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install PDF tools
-        run: choco install qpdf ghostscript -y --no-progress
-
-      - name: Stage bundled tools
-        run: |
-          if (-not (Test-Path apps/desktop/src-tauri/resources/bin)) {
-            New-Item -ItemType Directory -Path apps/desktop/src-tauri/resources/bin -Force | Out-Null
-          }
-          
-          # Find and copy qpdf
-          $qpdf = (Get-Command qpdf.exe -ErrorAction SilentlyContinue).Source
-          if (-not $qpdf) {
-            $qpdf = "C:\Program Files\qpdf\bin\qpdf.exe"
-          }
-          if (Test-Path $qpdf) {
-            Copy-Item $qpdf apps/desktop/src-tauri/resources/bin/
-            Write-Host "Copied qpdf: $qpdf"
-          } else {
-            throw "qpdf.exe not found"
-          }
-          
-          # Find and copy Ghostscript
-          $gs = (Get-ChildItem "C:\Program Files\gs" -Recurse -Filter gswin64c.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          if ($gs) {
-            Copy-Item $gs apps/desktop/src-tauri/resources/bin/
-            Write-Host "Copied Ghostscript: $gs"
-            
-            # Also copy Ghostscript DLLs from same directory
-            $gsDir = Split-Path $gs
-            Get-ChildItem "$gsDir\*.dll" | ForEach-Object {
-              Copy-Item $_.FullName apps/desktop/src-tauri/resources/bin/
-              Write-Host "Copied DLL: $($_.Name)"
-            }
-          } else {
-            throw "gswin64c.exe not found"
-          }
-
       - name: Build Go backend
         run: |
           cd backend/go-service
           if (-not (Test-Path bin)) { mkdir bin }
           go build -o bin/pdfsvc.exe ./cmd/pdfsvc
 
-      - name: Stage binaries for bundling
-        run: |
-          if (-not (Test-Path apps/desktop/src-tauri/resources/bin)) { mkdir apps/desktop/src-tauri/resources/bin }
-          Copy-Item backend/go-service/bin/pdfsvc.exe apps/desktop/src-tauri/resources/bin/
-
-      - name: Install deps
+      - name: Install dependencies
         run: |
           cd apps/desktop
           npm install
@@ -91,3 +49,4 @@ jobs:
         with:
           name: pdftool-windows-bundle
           path: apps/desktop/src-tauri/target/release/bundle/**
+
